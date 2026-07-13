@@ -2,22 +2,23 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-002 Domain and repositories`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, and PostgreSQL repository implementations.
+This repository is currently at `PR-003 Telegram Bot shell`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, and a Telegram bot shell.
 
 ## Architecture
 
 - `cmd/api`: internal HTTP API. Exposes `/health` and `/ready`.
 - `cmd/migrate`: lightweight SQL migration runner.
-- `cmd/bot`: Telegram Bot process placeholder for PR-003.
+- `cmd/bot`: Telegram Bot process with owner-only shell navigation.
 - `cmd/tdlib-worker`: TDLib worker placeholder for PR-004.
 - `cmd/summary-worker`: background summary worker placeholder for later PRs.
 - `internal/config`: environment-based configuration.
 - `internal/domain`: core entities and enums.
 - `internal/storage`: repository interfaces.
 - `internal/storage/postgres`: PostgreSQL connection, migrations, repository implementations.
+- `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, and in-memory dialog state.
 - `migrations`: reversible SQL migrations.
 
-TDLib and LLM integrations are intentionally not connected in this bootstrap step.
+TDLib and LLM integrations are intentionally not connected yet.
 
 ## Configuration
 
@@ -48,6 +49,8 @@ make run-worker
 make docker-up
 make docker-down
 ```
+
+The bot exits idle when `TELEGRAM_BOT_TOKEN` or `TELEGRAM_OWNER_ID` is not configured. With both values set, it starts Telegram long polling and only responds to the configured owner.
 
 ## Docker
 
@@ -97,4 +100,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-`PR-003 — Telegram Bot shell` should add `/start`, owner-only middleware, the main menu, callback routing, and basic dialog state. TDLib authorization remains planned for PR-004.
+`PR-004 — TDLib authorization` should add the account authorization state machine, phone/code/password flow, TDLib session persistence, and session deletion.
