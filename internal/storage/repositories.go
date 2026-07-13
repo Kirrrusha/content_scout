@@ -45,6 +45,7 @@ type ReadPositionRepository interface {
 
 type MessageCollectionRepository interface {
 	CreateJob(ctx context.Context, job domain.MessageCollectionJob) (*domain.MessageCollectionJob, error)
+	FindJob(ctx context.Context, jobID int64) (*domain.MessageCollectionJob, error)
 	UpdateJobStatus(ctx context.Context, jobID int64, status domain.JobStatus, message *string) error
 	AddMessages(ctx context.Context, messages []domain.CollectedMessage) error
 	ListMessages(ctx context.Context, jobID int64) ([]domain.CollectedMessage, error)

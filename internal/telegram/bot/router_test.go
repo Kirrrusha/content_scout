@@ -8,6 +8,7 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/domain"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
+	"github.com/kirilllebedenko/content_scout/internal/summary"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
@@ -301,6 +302,30 @@ func TestRouterCollectGroupCommand(t *testing.T) {
 	}
 }
 
+func TestRouterSummarizeCollectionCommand(t *testing.T) {
+	ctx := context.Background()
+	summary := &fakeSummaryController{
+		result: &summaryResultFixture,
+	}
+	router := NewRouterWithServices(42, NewMemoryStateStore(), nil, nil, nil, nil, summary)
+
+	out, err := router.Handle(ctx, Incoming{
+		Kind:   IncomingMessage,
+		UserID: 42,
+		ChatID: 100,
+		Text:   "/summarize_collection 9 detailed",
+	})
+	if err != nil {
+		t.Fatalf("Handle(summarize_collection) error = %v", err)
+	}
+	if summary.request.CollectionJobID != 9 || summary.request.Format != "detailed" {
+		t.Fatalf("request = %+v", summary.request)
+	}
+	if !strings.Contains(out.Text, "Summary создано") {
+		t.Fatalf("output = %q", out.Text)
+	}
+}
+
 type fakeAuthController struct {
 	started     bool
 	deleted     bool
@@ -412,6 +437,18 @@ type fakeCollectionController struct {
 }
 
 func (f *fakeCollectionController) CollectGroup(_ context.Context, req collection.Request) (*collection.Result, error) {
+	f.request = req
+	return f.result, nil
+}
+
+var summaryResultFixture = summary.GenerateResult{SummaryID: 1, SummaryJobID: 2, TopicsCount: 3, MessagesCount: 4, DuplicateCount: 5}
+
+type fakeSummaryController struct {
+	request summary.GenerateRequest
+	result  *summary.GenerateResult
+}
+
+func (f *fakeSummaryController) GenerateFromCollection(_ context.Context, req summary.GenerateRequest) (*summary.GenerateResult, error) {
 	f.request = req
 	return f.result, nil
 }

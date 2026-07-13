@@ -1,0 +1,153 @@
+package llm
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+type OpenAICompatible struct {
+	baseURL string
+	apiKey  string
+	model   string
+	client  *http.Client
+	retries int
+}
+
+func NewOpenAICompatible(baseURL, apiKey, model string, client *http.Client) *OpenAICompatible {
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 60 * time.Second}
+	}
+	return &OpenAICompatible{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		apiKey:  apiKey,
+		model:   model,
+		client:  client,
+		retries: 2,
+	}
+}
+
+func (c *OpenAICompatible) Summarize(ctx context.Context, input SummaryInput) (*SummaryResult, error) {
+	if c.apiKey == "" {
+		return nil, errors.New("LLM_API_KEY is not configured")
+	}
+	if c.model == "" {
+		return nil, errors.New("LLM_MODEL is not configured")
+	}
+	payload := chatRequest{
+		Model: c.model,
+		Messages: []chatMessage{
+			{Role: "system", Content: summarySystemPrompt},
+			{Role: "user", Content: mustJSON(input)},
+		},
+		Temperature:    0.2,
+		ResponseFormat: map[string]string{"type": "json_object"},
+	}
+	var lastErr error
+	for attempt := 0; attempt <= c.retries; attempt++ {
+		raw, err := c.doChat(ctx, payload)
+		if err != nil {
+			lastErr = err
+			sleepBackoff(ctx, attempt)
+			continue
+		}
+		result, err := ParseSummaryResult(raw)
+		if err != nil {
+			lastErr = err
+			sleepBackoff(ctx, attempt)
+			continue
+		}
+		return result, nil
+	}
+	return nil, fmt.Errorf("summarize with llm: %w", lastErr)
+}
+
+func (c *OpenAICompatible) ConvertToArticle(context.Context, ArticleInput) (*ArticleResult, error) {
+	return nil, errors.New("article conversion is not implemented yet")
+}
+
+func (c *OpenAICompatible) doChat(ctx context.Context, payload chatRequest) ([]byte, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil, fmt.Errorf("llm temporary status: %d", resp.StatusCode)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil, fmt.Errorf("llm status: %d", resp.StatusCode)
+	}
+	var decoded chatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return nil, fmt.Errorf("decode llm response: %w", err)
+	}
+	if len(decoded.Choices) == 0 || decoded.Choices[0].Message.Content == "" {
+		return nil, errors.New("llm response has no content")
+	}
+	return []byte(decoded.Choices[0].Message.Content), nil
+}
+
+func sleepBackoff(ctx context.Context, attempt int) {
+	if attempt <= 0 {
+		return
+	}
+	timer := time.NewTimer(time.Duration(attempt*attempt) * 200 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+}
+
+func mustJSON(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
+}
+
+type chatRequest struct {
+	Model          string            `json:"model"`
+	Messages       []chatMessage     `json:"messages"`
+	Temperature    float64           `json:"temperature"`
+	ResponseFormat map[string]string `json:"response_format,omitempty"`
+}
+
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type chatResponse struct {
+	Choices []struct {
+		Message chatMessage `json:"message"`
+	} `json:"choices"`
+}
+
+const summarySystemPrompt = `Ты формируешь тематическую сводку на русском языке по сообщениям Telegram.
+Не выдумывай факты. Отделяй факты от мнений. Отмечай противоречия и низкую уверенность.
+Верни только JSON: {"title":"string","overview":"string","topics":[{"title":"string","category":"string","short_summary":"string","full_summary":"string","why_important":"string","confidence":"high|medium|low","importance":1,"source_indexes":[0]}]}.`

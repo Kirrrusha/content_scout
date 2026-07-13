@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
@@ -23,6 +24,22 @@ func (r *MessageCollectionRepository) CreateJob(ctx context.Context, job domain.
 		RETURNING id, user_id, group_id, mode, limit_count, status, error, created_at, updated_at
 	`
 	return scanCollectionJob(r.db.QueryRowContext(ctx, query, job.UserID, job.GroupID, job.Mode, job.Limit, job.Status, nullString(job.Error)))
+}
+
+func (r *MessageCollectionRepository) FindJob(ctx context.Context, jobID int64) (*domain.MessageCollectionJob, error) {
+	const query = `
+		SELECT id, user_id, group_id, mode, limit_count, status, error, created_at, updated_at
+		FROM message_collection_jobs
+		WHERE id = $1
+	`
+	job, err := scanCollectionJob(r.db.QueryRowContext(ctx, query, jobID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find message collection job: %w", err)
+	}
+	return job, nil
 }
 
 func (r *MessageCollectionRepository) UpdateJobStatus(ctx context.Context, jobID int64, status domain.JobStatus, message *string) error {

@@ -268,6 +268,13 @@ func (r *memoryCollectionRepo) CreateJob(_ context.Context, job domain.MessageCo
 	r.jobs[job.ID] = job
 	return &job, nil
 }
+func (r *memoryCollectionRepo) FindJob(_ context.Context, jobID int64) (*domain.MessageCollectionJob, error) {
+	job, ok := r.jobs[jobID]
+	if !ok {
+		return nil, nil
+	}
+	return &job, nil
+}
 func (r *memoryCollectionRepo) UpdateJobStatus(_ context.Context, jobID int64, status domain.JobStatus, message *string) error {
 	job := r.jobs[jobID]
 	job.Status = status

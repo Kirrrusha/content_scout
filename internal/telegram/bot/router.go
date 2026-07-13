@@ -8,6 +8,7 @@ import (
 
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/domain"
+	"github.com/kirilllebedenko/content_scout/internal/summary"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
@@ -32,6 +33,7 @@ type Router struct {
 	sync      SyncController
 	groups    GroupController
 	collector CollectionController
+	summary   SummaryController
 }
 
 func NewRouter(ownerID int64, states StateStore) *Router {
@@ -51,7 +53,11 @@ func NewRouterWithAllControllers(ownerID int64, states StateStore, auth AuthCont
 }
 
 func NewRouterWithRuntime(ownerID int64, states StateStore, auth AuthController, sync SyncController, groups GroupController, collector CollectionController) *Router {
-	return &Router{ownerID: ownerID, states: states, auth: auth, sync: sync, groups: groups, collector: collector}
+	return NewRouterWithServices(ownerID, states, auth, sync, groups, collector, nil)
+}
+
+func NewRouterWithServices(ownerID int64, states StateStore, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summary SummaryController) *Router {
+	return &Router{ownerID: ownerID, states: states, auth: auth, sync: sync, groups: groups, collector: collector, summary: summary}
 }
 
 func (r *Router) Handle(ctx context.Context, in Incoming) (Outgoing, error) {
@@ -114,6 +120,8 @@ func (r *Router) handleMessage(ctx context.Context, in Incoming) (Outgoing, erro
 		return r.showGroupChats(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_chats")))
 	case "collect_group":
 		return r.collectGroup(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/collect_group")))
+	case "summarize_collection":
+		return r.summarizeCollection(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/summarize_collection")))
 	case "settings":
 		return r.showSettings(ctx, in.ChatID, in.UserID, 0, "")
 	default:
@@ -551,4 +559,31 @@ func (r *Router) collectGroup(ctx context.Context, chatID, userID int64, raw str
 		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu()}, nil
 	}
 	return Outgoing{ChatID: chatID, Text: collectionResultText(result), Menu: BackMenu()}, nil
+}
+
+func (r *Router) summarizeCollection(ctx context.Context, chatID, userID int64, raw string) (Outgoing, error) {
+	if r.summary == nil {
+		return Outgoing{ChatID: chatID, Text: "Генерация summary пока не настроена.", Menu: BackMenu()}, nil
+	}
+	parts := strings.Fields(raw)
+	if len(parts) == 0 {
+		return Outgoing{ChatID: chatID, Text: "Использование: /summarize_collection <collection_job_id> [short|standard|detailed]", Menu: BackMenu()}, nil
+	}
+	collectionJobID, err := parseID(parts[0])
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: "Некорректный ID collection job.", Menu: BackMenu()}, nil
+	}
+	format := "standard"
+	if len(parts) > 1 {
+		format = parts[1]
+	}
+	result, err := r.summary.GenerateFromCollection(ctx, summary.GenerateRequest{
+		TelegramUserID:  userID,
+		CollectionJobID: collectionJobID,
+		Format:          format,
+	})
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu()}, nil
+	}
+	return Outgoing{ChatID: chatID, Text: summaryResultText(result), Menu: BackMenu()}, nil
 }

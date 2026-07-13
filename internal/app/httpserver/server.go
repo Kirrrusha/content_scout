@@ -13,6 +13,7 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/domain"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
+	"github.com/kirilllebedenko/content_scout/internal/summary"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
@@ -24,6 +25,7 @@ type Server struct {
 	sync       SyncController
 	groups     GroupController
 	collector  CollectionController
+	summary    SummaryController
 }
 
 type AuthController interface {
@@ -55,6 +57,10 @@ type CollectionController interface {
 	CollectGroup(ctx context.Context, req collection.Request) (*collection.Result, error)
 }
 
+type SummaryController interface {
+	GenerateFromCollection(ctx context.Context, req summary.GenerateRequest) (*summary.GenerateResult, error)
+}
+
 func New(addr string, db *sql.DB, logger *slog.Logger) *Server {
 	return NewWithAuth(addr, db, logger, nil)
 }
@@ -72,6 +78,10 @@ func NewWithAllControllers(addr string, db *sql.DB, logger *slog.Logger, auth Au
 }
 
 func NewWithRuntime(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController, groups GroupController, collector CollectionController) *Server {
+	return NewWithServices(addr, db, logger, auth, sync, groups, collector, nil)
+}
+
+func NewWithServices(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summaryService SummaryController) *Server {
 	server := &Server{
 		db:        db,
 		logger:    logger,
@@ -79,6 +89,7 @@ func NewWithRuntime(addr string, db *sql.DB, logger *slog.Logger, auth AuthContr
 		sync:      sync,
 		groups:    groups,
 		collector: collector,
+		summary:   summaryService,
 	}
 
 	mux := http.NewServeMux()
@@ -101,6 +112,7 @@ func NewWithRuntime(addr string, db *sql.DB, logger *slog.Logger, auth AuthContr
 	mux.HandleFunc("POST /groups/{id}/chats", server.groupChatsAdd)
 	mux.HandleFunc("DELETE /groups/{id}/chats/{chatId}", server.groupChatsRemove)
 	mux.HandleFunc("POST /collections/group/{id}", server.collectionGroupCreate)
+	mux.HandleFunc("POST /summaries/from-collection/{id}", server.summaryFromCollection)
 
 	server.httpServer = &http.Server{
 		Addr:              addr,

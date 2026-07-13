@@ -4,7 +4,7 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-008 Filtering and deduplication`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, and duplicate clustering.
+This repository is currently at `PR-009 LLM summary`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, and LLM summary generation.
 
 ## Architecture
 
@@ -21,7 +21,9 @@ This repository is currently at `PR-008 Filtering and deduplication`: project st
 - `internal/sourcegroups`: source group use cases and ownership validation.
 - `internal/summary/filter`: message normalization, noise filtering, advertisement/job heuristics, and filter stats.
 - `internal/summary/deduplicator`: duplicate clustering by exact hash, shared URL, and Jaccard similarity.
+- `internal/summary/llm`: LLM provider interfaces, OpenAI-compatible adapter, strict JSON parsing, and retry handling.
 - `internal/summary/pipeline`: composed filter + deduplication processing for collected messages.
+- `internal/summary`: summary generation service from collection jobs.
 - `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, cached folder/chat views, and in-memory dialog state.
 - `internal/telegram/tdlib`: TDLib client interface, authorization state machine, session persistence, folder/chat sync service, and unavailable native adapter placeholder.
 - `migrations`: reversible SQL migrations.
@@ -81,6 +83,7 @@ Bot commands currently available:
 /group_add_chat <group_id> <chat_id> [priority]
 /group_remove_chat <group_id> <chat_id>
 /collect_group <group_id> [new|24h|3d|week|latest_n] [limit]
+/summarize_collection <collection_job_id> [short|standard|detailed]
 /settings
 ```
 
@@ -146,6 +149,20 @@ Filtering and deduplication currently run as pure Go services over collected mes
 - removes empty, emoji-only, too-short, ad-like, and job-like messages according to rules;
 - groups duplicates by content hash, shared URL, and token Jaccard similarity.
 
+Internal summary endpoint:
+
+```text
+POST   /summaries/from-collection/{id}
+```
+
+Request body:
+
+```json
+{"telegram_user_id": 123, "format": "standard"}
+```
+
+Summary generation uses the collected messages, filter/deduplication pipeline, an OpenAI-compatible chat completions provider, strict JSON validation, retry handling, and persists `summary_jobs`, `summaries`, and `summary_topics`.
+
 ## Docker
 
 ```sh
@@ -196,4 +213,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-`PR-009 — LLM summary` should add provider interfaces, an OpenAI-compatible adapter, prompt templates, strict JSON parsing, retries, and summary persistence.
+`PR-010 — Summary Bot UI` should add summary history, topic cards, pagination, source links, and owner-checked callback navigation.

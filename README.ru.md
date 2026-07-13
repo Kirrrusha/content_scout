@@ -4,7 +4,7 @@
 
 Персональный сервис для сводок из Telegram с экспортом Markdown-файлов в Obsidian.
 
-Текущее состояние репозитория: `PR-008 Filtering and deduplication`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация и группировка дублей.
+Текущее состояние репозитория: `PR-009 LLM summary`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей и генерация summary через LLM.
 
 ## Архитектура
 
@@ -19,7 +19,9 @@
 - `internal/sourcegroups`: сценарии source groups и проверка владения.
 - `internal/summary/filter`: нормализация сообщений, фильтрация шума, эвристики рекламы/вакансий и статистика фильтрации.
 - `internal/summary/deduplicator`: группировка дублей по exact hash, общей ссылке и Jaccard similarity.
+- `internal/summary/llm`: provider interfaces, OpenAI-compatible adapter, строгий JSON parsing и retry handling.
 - `internal/summary/pipeline`: общий filter + deduplication pipeline для collected messages.
+- `internal/summary`: сервис генерации summary из collection jobs.
 - `internal/storage`: repository interfaces.
 - `internal/storage/postgres`: PostgreSQL connection, миграции и реализации repositories.
 - `internal/telegram/bot`: Telegram Bot API polling, owner guard, меню, callback routing, просмотр кэша папок/чатов и in-memory dialog state.
@@ -81,6 +83,7 @@ make docker-down
 /group_add_chat <group_id> <chat_id> [priority]
 /group_remove_chat <group_id> <chat_id>
 /collect_group <group_id> [new|24h|3d|week|latest_n] [limit]
+/summarize_collection <collection_job_id> [short|standard|detailed]
 /settings
 ```
 
@@ -146,6 +149,20 @@ POST   /collections/group/{id}
 - удаляют пустые, emoji-only, слишком короткие, рекламные и похожие на вакансии сообщения по правилам;
 - группируют дубли по content hash, общей ссылке и token Jaccard similarity.
 
+Внутренний endpoint summary:
+
+```text
+POST   /summaries/from-collection/{id}
+```
+
+Тело запроса:
+
+```json
+{"telegram_user_id": 123, "format": "standard"}
+```
+
+Генерация summary использует collected messages, filter/deduplication pipeline, OpenAI-compatible chat completions provider, строгую JSON validation, retry handling и сохраняет `summary_jobs`, `summaries` и `summary_topics`.
+
 ## Docker
 
 ```sh
@@ -196,4 +213,4 @@ go test ./internal/storage/postgres
 
 ## Следующий PR
 
-`PR-009 — LLM summary`: provider interfaces, OpenAI-compatible adapter, prompt templates, строгий JSON parsing, retries и сохранение summary.
+`PR-010 — Summary Bot UI`: история summary, карточки тем, pagination, ссылки на источники и owner-checked callback navigation.

@@ -3,14 +3,18 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/config"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/storage/postgres"
+	"github.com/kirilllebedenko/content_scout/internal/summary"
+	"github.com/kirilllebedenko/content_scout/internal/summary/llm"
 	tgbot "github.com/kirilllebedenko/content_scout/internal/telegram/bot"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
@@ -75,8 +79,16 @@ func main() {
 		postgres.NewMessageCollectionRepository(db),
 		factory,
 	)
+	summaryService := summary.NewService(
+		cfg.TelegramOwnerID,
+		userRepo,
+		postgres.NewMessageCollectionRepository(db),
+		postgres.NewSummaryRepository(db),
+		postgres.NewTelegramChatRepository(db),
+		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: 60 * time.Second}),
+	)
 
-	service, err := tgbot.NewServiceWithRuntime(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, syncService, groupService, collectionService, logger)
+	service, err := tgbot.NewServiceWithServices(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, syncService, groupService, collectionService, summaryService, logger)
 	if err != nil {
 		logger.Error("create bot service failed", "error", err)
 		os.Exit(1)

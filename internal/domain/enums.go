@@ -22,9 +22,10 @@ const (
 type SummarySourceType string
 
 const (
-	SummarySourceTypeChat   SummarySourceType = "chat"
-	SummarySourceTypeGroup  SummarySourceType = "group"
-	SummarySourceTypeFolder SummarySourceType = "folder"
+	SummarySourceTypeChat       SummarySourceType = "chat"
+	SummarySourceTypeGroup      SummarySourceType = "group"
+	SummarySourceTypeFolder     SummarySourceType = "folder"
+	SummarySourceTypeCollection SummarySourceType = "collection"
 )
 
 type JobStatus string
