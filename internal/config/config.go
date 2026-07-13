@@ -1,0 +1,91 @@
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+)
+
+type Config struct {
+	AppEnv           string
+	HTTPAddr         string
+	DatabaseURL      string
+	TelegramBotToken string
+	TelegramOwnerID  int64
+	TelegramAPIID    int
+	TelegramAPIHash  string
+	TDLibDatabaseDir string
+	LLMProvider      string
+	LLMBaseURL       string
+	LLMAPIKey        string
+	LLMModel         string
+	EncryptionKey    string
+	ExportDir        string
+}
+
+func Load() (Config, error) {
+	cfg := Config{
+		AppEnv:           getEnv("APP_ENV", "development"),
+		HTTPAddr:         getEnv("HTTP_ADDR", ":8080"),
+		DatabaseURL:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/telegram_summary?sslmode=disable"),
+		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
+		TelegramAPIHash:  os.Getenv("TELEGRAM_API_HASH"),
+		TDLibDatabaseDir: getEnv("TDLIB_DATABASE_DIR", "./data/tdlib"),
+		LLMProvider:      getEnv("LLM_PROVIDER", "openai"),
+		LLMBaseURL:       os.Getenv("LLM_BASE_URL"),
+		LLMAPIKey:        os.Getenv("LLM_API_KEY"),
+		LLMModel:         os.Getenv("LLM_MODEL"),
+		EncryptionKey:    os.Getenv("ENCRYPTION_KEY"),
+		ExportDir:        getEnv("EXPORT_DIR", "./data/exports"),
+	}
+
+	var err error
+	cfg.TelegramOwnerID, err = parseInt64Env("TELEGRAM_OWNER_ID", 0)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.TelegramAPIID, err = parseIntEnv("TELEGRAM_API_ID", 0)
+	if err != nil {
+		return Config{}, err
+	}
+
+	if cfg.HTTPAddr == "" {
+		return Config{}, errors.New("HTTP_ADDR must not be empty")
+	}
+	if cfg.DatabaseURL == "" {
+		return Config{}, errors.New("DATABASE_URL must not be empty")
+	}
+	return cfg, nil
+}
+
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+func parseIntEnv(key string, fallback int) (int, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w", key, err)
+	}
+	return parsed, nil
+}
+
+func parseInt64Env(key string, fallback int64) (int64, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w", key, err)
+	}
+	return parsed, nil
+}

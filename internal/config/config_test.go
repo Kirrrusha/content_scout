@@ -1,0 +1,65 @@
+package config
+
+import (
+	"os"
+	"testing"
+)
+
+func TestLoadDefaults(t *testing.T) {
+	unsetEnv(t, "APP_ENV")
+	unsetEnv(t, "HTTP_ADDR")
+	unsetEnv(t, "DATABASE_URL")
+	unsetEnv(t, "TELEGRAM_OWNER_ID")
+	unsetEnv(t, "TELEGRAM_API_ID")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.AppEnv != "development" {
+		t.Fatalf("AppEnv = %q, want development", cfg.AppEnv)
+	}
+	if cfg.TelegramOwnerID != 0 {
+		t.Fatalf("TelegramOwnerID = %d, want 0", cfg.TelegramOwnerID)
+	}
+}
+
+func TestLoadParsesNumbers(t *testing.T) {
+	t.Setenv("TELEGRAM_OWNER_ID", "12345")
+	t.Setenv("TELEGRAM_API_ID", "42")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.TelegramOwnerID != 12345 {
+		t.Fatalf("TelegramOwnerID = %d, want 12345", cfg.TelegramOwnerID)
+	}
+	if cfg.TelegramAPIID != 42 {
+		t.Fatalf("TelegramAPIID = %d, want 42", cfg.TelegramAPIID)
+	}
+}
+
+func TestLoadRejectsInvalidNumbers(t *testing.T) {
+	t.Setenv("TELEGRAM_OWNER_ID", "not-a-number")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want error")
+	}
+}
+
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	previous, existed := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("Unsetenv(%q) error = %v", key, err)
+	}
+	t.Cleanup(func() {
+		if existed {
+			_ = os.Setenv(key, previous)
+			return
+		}
+		_ = os.Unsetenv(key)
+	})
+}
