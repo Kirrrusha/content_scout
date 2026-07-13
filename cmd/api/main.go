@@ -13,6 +13,7 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/article"
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/config"
+	"github.com/kirilllebedenko/content_scout/internal/obsidian"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/storage/postgres"
 	"github.com/kirilllebedenko/content_scout/internal/summary"
@@ -91,8 +92,16 @@ func main() {
 		postgres.NewArticleRepository(db),
 		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: 60 * time.Second}),
 	)
+	exportService := obsidian.NewService(
+		cfg.TelegramOwnerID,
+		cfg.ExportDir,
+		userRepo,
+		postgres.NewArticleRepository(db),
+		summaryRepo,
+		postgres.NewObsidianExportRepository(db),
+	)
 
-	server := httpserver.NewWithArticle(cfg.HTTPAddr, db, logger, authService, syncService, groupService, collectionService, summaryService, summaryBrowser, articleService)
+	server := httpserver.NewWithExports(cfg.HTTPAddr, db, logger, authService, syncService, groupService, collectionService, summaryService, summaryBrowser, articleService, exportService)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Run()

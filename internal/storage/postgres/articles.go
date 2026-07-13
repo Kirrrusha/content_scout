@@ -125,6 +125,32 @@ func (r *ArticleRepository) ListByUser(ctx context.Context, userID int64, limit 
 	return articles, nil
 }
 
+func (r *ArticleRepository) ListSources(ctx context.Context, articleID int64) ([]domain.ArticleSource, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, article_id, telegram_chat_id, message_id, source_title, source_url, published_at
+		FROM article_sources
+		WHERE article_id = $1
+		ORDER BY published_at, id
+	`, articleID)
+	if err != nil {
+		return nil, fmt.Errorf("list article sources: %w", err)
+	}
+	defer rows.Close()
+
+	var sources []domain.ArticleSource
+	for rows.Next() {
+		var source domain.ArticleSource
+		if err := rows.Scan(&source.ID, &source.ArticleID, &source.TelegramChatID, &source.MessageID, &source.SourceTitle, &source.SourceURL, &source.PublishedAt); err != nil {
+			return nil, fmt.Errorf("scan article source: %w", err)
+		}
+		sources = append(sources, source)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate article sources: %w", err)
+	}
+	return sources, nil
+}
+
 func (r *ArticleRepository) Update(ctx context.Context, article domain.Article) (*domain.Article, error) {
 	updated, err := scanArticle(r.db.QueryRowContext(ctx, `
 		UPDATE articles

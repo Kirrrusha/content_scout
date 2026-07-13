@@ -68,6 +68,7 @@ type ArticleRepository interface {
 	FindByUser(ctx context.Context, userID, articleID int64) (*domain.Article, error)
 	FindBySlug(ctx context.Context, userID int64, slug string) (*domain.Article, error)
 	ListByUser(ctx context.Context, userID int64, limit int) ([]domain.Article, error)
+	ListSources(ctx context.Context, articleID int64) ([]domain.ArticleSource, error)
 	Update(ctx context.Context, article domain.Article) (*domain.Article, error)
 }
 

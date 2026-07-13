@@ -4,7 +4,7 @@
 
 Персональный сервис для сводок из Telegram с экспортом Markdown-файлов в Obsidian.
 
-Текущее состояние репозитория: `PR-011 Article conversion`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей, генерация summary через LLM, просмотр истории summary и конвертация summary/topics в черновики статей.
+Текущее состояние репозитория: `PR-012 Obsidian Markdown export`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей, генерация summary через LLM, просмотр истории summary, конвертация summary/topics в черновики статей и Markdown export для Obsidian.
 
 ## Архитектура
 
@@ -23,6 +23,7 @@
 - `internal/summary/pipeline`: общий filter + deduplication pipeline для collected messages.
 - `internal/summary`: сервис генерации summary из collection jobs и owner-checked browser для истории summary.
 - `internal/article`: сценарии конвертации статей, сохранение draft, source links, генерация slug и обновление title/tags.
+- `internal/obsidian`: Markdown renderer, YAML frontmatter, безопасные имена файлов, SHA-256 deduplication и сохранение export files.
 - `internal/storage`: repository interfaces.
 - `internal/storage/postgres`: PostgreSQL connection, миграции и реализации repositories.
 - `internal/telegram/bot`: Telegram Bot API polling, owner guard, меню, callback routing, просмотр кэша папок/чатов, UI истории summary, карточки тем, действия с черновиками статей и in-memory dialog state.
@@ -95,6 +96,8 @@ make docker-down
 /article <article_id>
 /article_title <article_id> <новое название>
 /article_tags <article_id> tag1,tag2
+/export_article <article_id>
+/export_summary <summary_id>
 /settings
 ```
 
@@ -195,6 +198,21 @@ PATCH  /articles/{id}
 
 Конвертация статей использует тот же OpenAI-compatible provider с отдельным JSON prompt, сохраняет draft в `articles`, source links в `article_sources`, генерирует уникальный slug и поддерживает owner-checked обновление title/tags.
 
+Внутренние endpoints Obsidian export:
+
+```text
+POST   /exports/articles/{id}
+POST   /exports/summaries/{id}
+```
+
+Тело запроса:
+
+```json
+{"telegram_user_id": 123}
+```
+
+Markdown exports сохраняются в `EXPORT_DIR`, содержат YAML frontmatter, используют безопасные `.md` имена файлов, сохраняют Telegram source links для черновиков статей, считают SHA-256 content hash и переиспользуют существующие записи `obsidian_exports` для идентичного контента. Бот отправляет созданный Markdown как Telegram document.
+
 ## Docker
 
 ```sh
@@ -245,4 +263,4 @@ go test ./internal/storage/postgres
 
 ## Следующий PR
 
-`PR-012 — Obsidian Markdown export`: генерация безопасных Markdown-файлов с frontmatter и отправка через бота.
+`PR-013 — Scheduling`: scheduled collection/summary/export jobs.

@@ -237,6 +237,7 @@ func articlesMenu(items []domain.Article) Menu {
 
 func articleMenu(articleID int64) Menu {
 	return Menu{
+		{{Text: "Экспорт", Data: fmt.Sprintf("exp:article:%d", articleID)}},
 		{{Text: "К статьям", Data: "art:list"}, {Text: "Назад", Data: ActionBackHome}},
 		{{Text: fmt.Sprintf("ID %d", articleID), Data: "art:list"}},
 	}

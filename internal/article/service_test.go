@@ -180,6 +180,9 @@ func (f *fakeArticles) ListByUser(context.Context, int64, int) ([]domain.Article
 	}
 	return []domain.Article{*f.found}, nil
 }
+func (f *fakeArticles) ListSources(context.Context, int64) ([]domain.ArticleSource, error) {
+	return f.sources, nil
+}
 func (f *fakeArticles) Update(_ context.Context, article domain.Article) (*domain.Article, error) {
 	f.found = &article
 	return &article, nil

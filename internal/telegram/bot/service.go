@@ -44,6 +44,10 @@ func NewServiceWithBrowser(token string, ownerID int64, auth AuthController, syn
 }
 
 func NewServiceWithArticle(token string, ownerID int64, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summary SummaryController, browser SummaryBrowserController, articles ArticleController, logger *slog.Logger) (*Service, error) {
+	return NewServiceWithExports(token, ownerID, auth, sync, groups, collector, summary, browser, articles, nil, logger)
+}
+
+func NewServiceWithExports(token string, ownerID int64, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summary SummaryController, browser SummaryBrowserController, articles ArticleController, exports ExportController, logger *slog.Logger) (*Service, error) {
 	if token == "" {
 		return nil, fmt.Errorf("telegram bot token is not configured")
 	}
@@ -53,7 +57,7 @@ func NewServiceWithArticle(token string, ownerID int64, auth AuthController, syn
 	}
 	return &Service{
 		api:    api,
-		router: NewRouterWithArticle(ownerID, NewMemoryStateStore(), auth, sync, groups, collector, summary, browser, articles),
+		router: NewRouterWithExports(ownerID, NewMemoryStateStore(), auth, sync, groups, collector, summary, browser, articles, exports),
 		logger: logger,
 	}, nil
 }
@@ -95,6 +99,16 @@ func (s *Service) Send(_ context.Context, out Outgoing) error {
 	if out.CallbackID != "" {
 		callback := tgbotapi.NewCallback(out.CallbackID, out.AnswerCallback)
 		_, _ = s.api.Request(callback)
+	}
+
+	if out.DocumentPath != "" {
+		doc := tgbotapi.NewDocument(out.ChatID, tgbotapi.FilePath(out.DocumentPath))
+		doc.Caption = out.Text
+		doc.ReplyMarkup = telegramMenu(out.Menu)
+		if _, err := s.api.Send(doc); err != nil {
+			return fmt.Errorf("send telegram document: %w", err)
+		}
+		return nil
 	}
 
 	if out.EditMessageID != 0 {

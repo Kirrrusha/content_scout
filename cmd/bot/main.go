@@ -12,6 +12,7 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/article"
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/config"
+	"github.com/kirilllebedenko/content_scout/internal/obsidian"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/storage/postgres"
 	"github.com/kirilllebedenko/content_scout/internal/summary"
@@ -99,8 +100,16 @@ func main() {
 		postgres.NewArticleRepository(db),
 		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: 60 * time.Second}),
 	)
+	exportService := obsidian.NewService(
+		cfg.TelegramOwnerID,
+		cfg.ExportDir,
+		userRepo,
+		postgres.NewArticleRepository(db),
+		summaryRepo,
+		postgres.NewObsidianExportRepository(db),
+	)
 
-	service, err := tgbot.NewServiceWithArticle(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, syncService, groupService, collectionService, summaryService, summaryBrowser, articleService, logger)
+	service, err := tgbot.NewServiceWithExports(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, syncService, groupService, collectionService, summaryService, summaryBrowser, articleService, exportService, logger)
 	if err != nil {
 		logger.Error("create bot service failed", "error", err)
 		os.Exit(1)

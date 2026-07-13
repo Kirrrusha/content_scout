@@ -36,6 +36,7 @@ type Router struct {
 	summary   SummaryController
 	browser   SummaryBrowserController
 	articles  ArticleController
+	exports   ExportController
 }
 
 func NewRouter(ownerID int64, states StateStore) *Router {
@@ -67,7 +68,11 @@ func NewRouterWithBrowser(ownerID int64, states StateStore, auth AuthController,
 }
 
 func NewRouterWithArticle(ownerID int64, states StateStore, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summary SummaryController, browser SummaryBrowserController, articles ArticleController) *Router {
-	return &Router{ownerID: ownerID, states: states, auth: auth, sync: sync, groups: groups, collector: collector, summary: summary, browser: browser, articles: articles}
+	return NewRouterWithExports(ownerID, states, auth, sync, groups, collector, summary, browser, articles, nil)
+}
+
+func NewRouterWithExports(ownerID int64, states StateStore, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summary SummaryController, browser SummaryBrowserController, articles ArticleController, exports ExportController) *Router {
+	return &Router{ownerID: ownerID, states: states, auth: auth, sync: sync, groups: groups, collector: collector, summary: summary, browser: browser, articles: articles, exports: exports}
 }
 
 func (r *Router) Handle(ctx context.Context, in Incoming) (Outgoing, error) {
@@ -152,6 +157,10 @@ func (r *Router) handleMessage(ctx context.Context, in Incoming) (Outgoing, erro
 		return r.renameArticle(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/article_title")), 0, "")
 	case "article_tags":
 		return r.updateArticleTags(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/article_tags")), 0, "")
+	case "export_article":
+		return r.exportArticle(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/export_article")), 0, "")
+	case "export_summary":
+		return r.exportSummary(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/export_summary")), 0, "")
 	case "settings":
 		return r.showSettings(ctx, in.ChatID, in.UserID, 0, "")
 	default:
@@ -172,6 +181,11 @@ func (r *Router) handleCallback(ctx context.Context, in Incoming) (Outgoing, err
 	}
 	if strings.HasPrefix(in.CallbackData, "art:") {
 		out, err = r.handleArticleCallback(ctx, in)
+		out.CallbackID = in.CallbackID
+		return out, err
+	}
+	if strings.HasPrefix(in.CallbackData, "exp:") {
+		out, err = r.handleExportCallback(ctx, in)
 		out.CallbackID = in.CallbackID
 		return out, err
 	}

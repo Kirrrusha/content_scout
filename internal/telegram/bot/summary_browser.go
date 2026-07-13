@@ -180,7 +180,7 @@ func summariesMenu(items []domain.Summary) Menu {
 func summaryMenu(summaryID int64) Menu {
 	return Menu{
 		{{Text: "Темы", Data: fmt.Sprintf("sum:topic:%d:1", summaryID)}},
-		{{Text: "Сделать статью", Data: fmt.Sprintf("art:summary:%d", summaryID)}},
+		{{Text: "Сделать статью", Data: fmt.Sprintf("art:summary:%d", summaryID)}, {Text: "Экспорт", Data: fmt.Sprintf("exp:summary:%d", summaryID)}},
 		{{Text: "К истории", Data: "sum:list"}, {Text: "Назад", Data: ActionBackHome}},
 	}
 }

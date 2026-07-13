@@ -25,6 +25,8 @@ type Outgoing struct {
 	ChatID         int64
 	Text           string
 	Menu           Menu
+	DocumentPath   string
+	DocumentName   string
 	EditMessageID  int
 	CallbackID     string
 	AnswerCallback string

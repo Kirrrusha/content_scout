@@ -13,6 +13,7 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/article"
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/domain"
+	"github.com/kirilllebedenko/content_scout/internal/obsidian"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/summary"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
@@ -29,6 +30,7 @@ type Server struct {
 	summary    SummaryController
 	browser    SummaryBrowser
 	articles   ArticleController
+	exports    ExportController
 }
 
 type AuthController interface {
@@ -78,6 +80,11 @@ type ArticleController interface {
 	UpdateMetadata(ctx context.Context, telegramUserID, articleID int64, title string, tags []string) (*domain.Article, error)
 }
 
+type ExportController interface {
+	ExportArticle(ctx context.Context, telegramUserID, articleID int64) (*obsidian.Result, error)
+	ExportSummary(ctx context.Context, telegramUserID, summaryID int64) (*obsidian.Result, error)
+}
+
 func New(addr string, db *sql.DB, logger *slog.Logger) *Server {
 	return NewWithAuth(addr, db, logger, nil)
 }
@@ -107,6 +114,10 @@ func NewWithBrowser(addr string, db *sql.DB, logger *slog.Logger, auth AuthContr
 }
 
 func NewWithArticle(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summaryService SummaryController, browser SummaryBrowser, articles ArticleController) *Server {
+	return NewWithExports(addr, db, logger, auth, sync, groups, collector, summaryService, browser, articles, nil)
+}
+
+func NewWithExports(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summaryService SummaryController, browser SummaryBrowser, articles ArticleController, exports ExportController) *Server {
 	server := &Server{
 		db:        db,
 		logger:    logger,
@@ -117,6 +128,7 @@ func NewWithArticle(addr string, db *sql.DB, logger *slog.Logger, auth AuthContr
 		summary:   summaryService,
 		browser:   browser,
 		articles:  articles,
+		exports:   exports,
 	}
 
 	mux := http.NewServeMux()
@@ -148,6 +160,8 @@ func NewWithArticle(addr string, db *sql.DB, logger *slog.Logger, auth AuthContr
 	mux.HandleFunc("GET /articles", server.articlesList)
 	mux.HandleFunc("GET /articles/{id}", server.articleGet)
 	mux.HandleFunc("PATCH /articles/{id}", server.articleUpdate)
+	mux.HandleFunc("POST /exports/articles/{id}", server.exportArticle)
+	mux.HandleFunc("POST /exports/summaries/{id}", server.exportSummary)
 
 	server.httpServer = &http.Server{
 		Addr:              addr,
