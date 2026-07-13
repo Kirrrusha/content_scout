@@ -16,6 +16,9 @@ const (
 	ViewHistory         DialogView = "history"
 	ViewArticles        DialogView = "articles"
 	ViewSettings        DialogView = "settings"
+	ViewAuthPhone       DialogView = "auth_phone"
+	ViewAuthCode        DialogView = "auth_code"
+	ViewAuthPassword    DialogView = "auth_password"
 )
 
 type DialogState struct {

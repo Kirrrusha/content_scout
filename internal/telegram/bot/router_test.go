@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/kirilllebedenko/content_scout/internal/domain"
+	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
 func TestRouterStartShowsMainMenu(t *testing.T) {
@@ -106,4 +109,110 @@ func TestRouterRequiresConfiguredOwner(t *testing.T) {
 	if err == nil {
 		t.Fatal("Handle() error = nil, want owner config error")
 	}
+}
+
+func TestRouterConnectStartsAuthorization(t *testing.T) {
+	ctx := context.Background()
+	states := NewMemoryStateStore()
+	auth := &fakeAuthController{
+		startStatus: &tdlib.AuthStatus{
+			SessionState: domain.SessionStatusAuthorizing,
+			AuthState:    tdlib.AuthorizationStateWaitPhoneNumber,
+		},
+	}
+	router := NewRouterWithAuth(42, states, auth)
+
+	out, err := router.Handle(ctx, Incoming{
+		Kind:   IncomingMessage,
+		UserID: 42,
+		ChatID: 100,
+		Text:   "/connect",
+	})
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if !auth.started {
+		t.Fatal("auth was not started")
+	}
+	if !strings.Contains(out.Text, "номер телефона") {
+		t.Fatalf("Text = %q", out.Text)
+	}
+	state, ok, err := states.Get(ctx, 42)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if !ok || state.View != ViewAuthPhone {
+		t.Fatalf("state = %+v ok=%v, want auth phone", state, ok)
+	}
+}
+
+func TestRouterDialogSubmitsCode(t *testing.T) {
+	ctx := context.Background()
+	states := NewMemoryStateStore()
+	if err := states.Set(ctx, 42, DialogState{View: ViewAuthCode}); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	auth := &fakeAuthController{
+		codeStatus: &tdlib.AuthStatus{
+			SessionState: domain.SessionStatusConnected,
+			AuthState:    tdlib.AuthorizationStateReady,
+		},
+	}
+	router := NewRouterWithAuth(42, states, auth)
+
+	out, err := router.Handle(ctx, Incoming{
+		Kind:   IncomingMessage,
+		UserID: 42,
+		ChatID: 100,
+		Text:   "12345",
+	})
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if auth.code != "12345" {
+		t.Fatalf("code = %q, want 12345", auth.code)
+	}
+	if !strings.Contains(out.Text, "подключен") {
+		t.Fatalf("Text = %q", out.Text)
+	}
+}
+
+type fakeAuthController struct {
+	started     bool
+	deleted     bool
+	phone       string
+	code        string
+	password    string
+	startStatus *tdlib.AuthStatus
+	phoneStatus *tdlib.AuthStatus
+	codeStatus  *tdlib.AuthStatus
+}
+
+func (f *fakeAuthController) Start(context.Context, int64) (*tdlib.AuthStatus, error) {
+	f.started = true
+	return f.startStatus, nil
+}
+
+func (f *fakeAuthController) SubmitPhoneNumber(_ context.Context, _ int64, phone string) (*tdlib.AuthStatus, error) {
+	f.phone = phone
+	return f.phoneStatus, nil
+}
+
+func (f *fakeAuthController) SubmitCode(_ context.Context, _ int64, code string) (*tdlib.AuthStatus, error) {
+	f.code = code
+	return f.codeStatus, nil
+}
+
+func (f *fakeAuthController) SubmitPassword(_ context.Context, _ int64, password string) (*tdlib.AuthStatus, error) {
+	f.password = password
+	return &tdlib.AuthStatus{SessionState: domain.SessionStatusConnected, AuthState: tdlib.AuthorizationStateReady}, nil
+}
+
+func (f *fakeAuthController) Status(context.Context, int64) (*tdlib.AuthStatus, error) {
+	return &tdlib.AuthStatus{SessionState: domain.SessionStatusConnected, AuthState: tdlib.AuthorizationStateReady}, nil
+}
+
+func (f *fakeAuthController) DeleteSession(context.Context, int64) error {
+	f.deleted = true
+	return nil
 }

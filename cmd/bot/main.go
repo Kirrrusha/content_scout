@@ -8,7 +8,9 @@ import (
 	"syscall"
 
 	"github.com/kirilllebedenko/content_scout/internal/config"
+	"github.com/kirilllebedenko/content_scout/internal/storage/postgres"
 	tgbot "github.com/kirilllebedenko/content_scout/internal/telegram/bot"
+	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
 func main() {
@@ -28,14 +30,28 @@ func main() {
 		return
 	}
 
-	service, err := tgbot.NewService(cfg.TelegramBotToken, cfg.TelegramOwnerID, logger)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	db, err := postgres.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("connect database failed", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	authService := tdlib.NewAuthService(tdlib.AuthServiceConfig{
+		OwnerTelegramID: cfg.TelegramOwnerID,
+		TelegramAPIID:   cfg.TelegramAPIID,
+		TelegramAPIHash: cfg.TelegramAPIHash,
+		StorageBaseDir:  cfg.TDLibDatabaseDir,
+	}, postgres.NewUserRepository(db), postgres.NewTelegramSessionRepository(db), tdlib.UnavailableClientFactory{})
+
+	service, err := tgbot.NewServiceWithAuth(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, logger)
 	if err != nil {
 		logger.Error("create bot service failed", "error", err)
 		os.Exit(1)
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	if err := tgbot.RunWithShutdown(ctx, service); err != nil {
 		logger.Error("bot service failed", "error", err)

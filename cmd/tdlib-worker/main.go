@@ -7,5 +7,5 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	logger.Info("tdlib worker bootstrap is ready; TDLib authorization is planned for PR-004")
+	logger.Info("tdlib worker shell is ready; native TDLib adapter is planned after the authorization state machine")
 }

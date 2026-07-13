@@ -16,6 +16,10 @@ type Service struct {
 }
 
 func NewService(token string, ownerID int64, logger *slog.Logger) (*Service, error) {
+	return NewServiceWithAuth(token, ownerID, nil, logger)
+}
+
+func NewServiceWithAuth(token string, ownerID int64, auth AuthController, logger *slog.Logger) (*Service, error) {
 	if token == "" {
 		return nil, fmt.Errorf("telegram bot token is not configured")
 	}
@@ -25,7 +29,7 @@ func NewService(token string, ownerID int64, logger *slog.Logger) (*Service, err
 	}
 	return &Service{
 		api:    api,
-		router: NewRouter(ownerID, NewMemoryStateStore()),
+		router: NewRouterWithAuth(ownerID, NewMemoryStateStore(), auth),
 		logger: logger,
 	}, nil
 }

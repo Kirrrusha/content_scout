@@ -2,23 +2,24 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-003 Telegram Bot shell`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, and a Telegram bot shell.
+This repository is currently at `PR-004 TDLib authorization`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, and TDLib authorization state machine.
 
 ## Architecture
 
 - `cmd/api`: internal HTTP API. Exposes `/health` and `/ready`.
 - `cmd/migrate`: lightweight SQL migration runner.
 - `cmd/bot`: Telegram Bot process with owner-only shell navigation.
-- `cmd/tdlib-worker`: TDLib worker placeholder for PR-004.
+- `cmd/tdlib-worker`: TDLib worker shell.
 - `cmd/summary-worker`: background summary worker placeholder for later PRs.
 - `internal/config`: environment-based configuration.
 - `internal/domain`: core entities and enums.
 - `internal/storage`: repository interfaces.
 - `internal/storage/postgres`: PostgreSQL connection, migrations, repository implementations.
 - `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, and in-memory dialog state.
+- `internal/telegram/tdlib`: TDLib client interface, authorization state machine, session persistence, and unavailable native adapter placeholder.
 - `migrations`: reversible SQL migrations.
 
-TDLib and LLM integrations are intentionally not connected yet.
+The native TDLib adapter is intentionally not connected yet. Authorization logic is implemented behind an interface and covered with fake clients, so the real adapter can be added without changing bot/API flows.
 
 ## Configuration
 
@@ -51,6 +52,37 @@ make docker-down
 ```
 
 The bot exits idle when `TELEGRAM_BOT_TOKEN` or `TELEGRAM_OWNER_ID` is not configured. With both values set, it starts Telegram long polling and only responds to the configured owner.
+
+Bot commands currently available:
+
+```text
+/start
+/connect
+/phone <number>
+/code <code>
+/password <2fa password>
+/session
+/delete_session
+/folders
+/chats
+/sync
+/settings
+```
+
+Authorization inputs are routed through the TDLib state machine. Phone numbers, confirmation codes, and 2FA passwords are not logged or stored by the application.
+
+Internal authorization endpoints:
+
+```text
+GET    /telegram/auth/status?telegram_user_id=...
+POST   /telegram/auth/start
+POST   /telegram/auth/phone
+POST   /telegram/auth/code
+POST   /telegram/auth/password
+DELETE /telegram/session
+```
+
+Request bodies use `telegram_user_id` plus the relevant field: `phone`, `code`, or `password`.
 
 ## Docker
 
@@ -100,4 +132,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-`PR-004 — TDLib authorization` should add the account authorization state machine, phone/code/password flow, TDLib session persistence, and session deletion.
+`PR-005 — Telegram folders and chats` should connect the native TDLib adapter enough to sync folders/chats, store unread counts, and show them through the bot.

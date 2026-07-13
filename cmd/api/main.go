@@ -11,6 +11,7 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/app/httpserver"
 	"github.com/kirilllebedenko/content_scout/internal/config"
 	"github.com/kirilllebedenko/content_scout/internal/storage/postgres"
+	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
 func main() {
@@ -32,7 +33,14 @@ func main() {
 	}
 	defer db.Close()
 
-	server := httpserver.New(cfg.HTTPAddr, db, logger)
+	authService := tdlib.NewAuthService(tdlib.AuthServiceConfig{
+		OwnerTelegramID: cfg.TelegramOwnerID,
+		TelegramAPIID:   cfg.TelegramAPIID,
+		TelegramAPIHash: cfg.TelegramAPIHash,
+		StorageBaseDir:  cfg.TDLibDatabaseDir,
+	}, postgres.NewUserRepository(db), postgres.NewTelegramSessionRepository(db), tdlib.UnavailableClientFactory{})
+
+	server := httpserver.NewWithAuth(cfg.HTTPAddr, db, logger, authService)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Run()
