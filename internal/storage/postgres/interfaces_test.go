@@ -20,4 +20,5 @@ func TestRepositoriesImplementInterfaces(t *testing.T) {
 	var _ storage.SummaryRepository = NewSummaryRepository(db)
 	var _ storage.ArticleRepository = NewArticleRepository(db)
 	var _ storage.ObsidianExportRepository = NewObsidianExportRepository(db)
+	var _ storage.SummaryScheduleRepository = NewSummaryScheduleRepository(db)
 }

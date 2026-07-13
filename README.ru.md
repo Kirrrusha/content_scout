@@ -4,7 +4,7 @@
 
 Персональный сервис для сводок из Telegram с экспортом Markdown-файлов в Obsidian.
 
-Текущее состояние репозитория: `PR-012 Obsidian Markdown export`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей, генерация summary через LLM, просмотр истории summary, конвертация summary/topics в черновики статей и Markdown export для Obsidian.
+Текущее состояние репозитория: `PR-013 Scheduling`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей, генерация summary через LLM, просмотр истории summary, конвертация summary/topics в черновики статей, Markdown export для Obsidian и scheduled summary runs.
 
 ## Архитектура
 
@@ -24,6 +24,7 @@
 - `internal/summary`: сервис генерации summary из collection jobs и owner-checked browser для истории summary.
 - `internal/article`: сценарии конвертации статей, сохранение draft, source links, генерация slug и обновление title/tags.
 - `internal/obsidian`: Markdown renderer, YAML frontmatter, безопасные имена файлов, SHA-256 deduplication и сохранение export files.
+- `internal/scheduler`: polling enabled schedules, timezone-aware daily due checks, quiet hours и orchestration collection -> summary -> optional export.
 - `internal/storage`: repository interfaces.
 - `internal/storage/postgres`: PostgreSQL connection, миграции и реализации repositories.
 - `internal/telegram/bot`: Telegram Bot API polling, owner guard, меню, callback routing, просмотр кэша папок/чатов, UI истории summary, карточки тем, действия с черновиками статей и in-memory dialog state.
@@ -213,6 +214,8 @@ POST   /exports/summaries/{id}
 
 Markdown exports сохраняются в `EXPORT_DIR`, содержат YAML frontmatter, используют безопасные `.md` имена файлов, сохраняют Telegram source links для черновиков статей, считают SHA-256 content hash и переиспользуют существующие записи `obsidian_exports` для идентичного контента. Бот отправляет созданный Markdown как Telegram document.
 
+Scheduled summaries хранятся в `summary_schedules` и выполняются через `cmd/summary-worker`. MVP поддерживает daily schedule strings в формате `HH:MM`, `daily@HH:MM` или `@daily`, IANA timezones, quiet-hour windows, summary format и optional export to Obsidian. Каждая попытка записывается в `schedule_runs`.
+
 ## Docker
 
 ```sh
@@ -246,6 +249,8 @@ http://localhost:8080/ready
 - `articles`
 - `article_sources`
 - `obsidian_exports`
+- `summary_schedules`
+- `schedule_runs`
 
 Интеграционные тесты используют `TEST_DATABASE_URL`. Если переменная не задана, PostgreSQL integration tests пропускаются.
 
@@ -263,4 +268,4 @@ go test ./internal/storage/postgres
 
 ## Следующий PR
 
-`PR-013 — Scheduling`: scheduled collection/summary/export jobs.
+`PR-014 — Obsidian REST integration`: прямое create/update заметок через Obsidian Local REST API.

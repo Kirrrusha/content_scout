@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
 )
@@ -75,4 +76,14 @@ type ArticleRepository interface {
 type ObsidianExportRepository interface {
 	Create(ctx context.Context, export domain.ObsidianExport) (*domain.ObsidianExport, error)
 	FindByContentHash(ctx context.Context, hash string) (*domain.ObsidianExport, error)
+}
+
+type SummaryScheduleRepository interface {
+	Create(ctx context.Context, schedule domain.SummarySchedule) (*domain.SummarySchedule, error)
+	Update(ctx context.Context, schedule domain.SummarySchedule) (*domain.SummarySchedule, error)
+	ListByUser(ctx context.Context, userID int64) ([]domain.SummarySchedule, error)
+	ListEnabled(ctx context.Context) ([]domain.SummarySchedule, error)
+	CreateRun(ctx context.Context, run domain.ScheduleRun) (*domain.ScheduleRun, error)
+	CompleteRun(ctx context.Context, runID int64, status domain.JobStatus, collectionJobID, summaryID, exportID *int64, message *string) error
+	MarkScheduleRun(ctx context.Context, scheduleID int64, runAt time.Time) error
 }
