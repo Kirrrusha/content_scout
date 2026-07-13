@@ -4,7 +4,7 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-007 Message collection`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, and message collection jobs.
+This repository is currently at `PR-008 Filtering and deduplication`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, and duplicate clustering.
 
 ## Architecture
 
@@ -19,6 +19,9 @@ This repository is currently at `PR-007 Message collection`: project structure, 
 - `internal/storage`: repository interfaces.
 - `internal/storage/postgres`: PostgreSQL connection, migrations, repository implementations.
 - `internal/sourcegroups`: source group use cases and ownership validation.
+- `internal/summary/filter`: message normalization, noise filtering, advertisement/job heuristics, and filter stats.
+- `internal/summary/deduplicator`: duplicate clustering by exact hash, shared URL, and Jaccard similarity.
+- `internal/summary/pipeline`: composed filter + deduplication processing for collected messages.
 - `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, cached folder/chat views, and in-memory dialog state.
 - `internal/telegram/tdlib`: TDLib client interface, authorization state machine, session persistence, folder/chat sync service, and unavailable native adapter placeholder.
 - `migrations`: reversible SQL migrations.
@@ -134,6 +137,15 @@ Request body:
 
 Supported modes are `new`, `24h`, `3d`, `week`, and `latest_n`. Collection jobs store fetched messages but intentionally do not advance `read_positions`; that happens only after a later successful summary.
 
+Filtering and deduplication currently run as pure Go services over collected messages:
+
+- combines message text and caption;
+- normalizes whitespace and line endings;
+- removes common Telegram footers;
+- extracts URLs;
+- removes empty, emoji-only, too-short, ad-like, and job-like messages according to rules;
+- groups duplicates by content hash, shared URL, and token Jaccard similarity.
+
 ## Docker
 
 ```sh
@@ -184,4 +196,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-`PR-008 — Filtering and deduplication` should add normalization, noise filtering, duplicate clustering, filter statistics, and tests for repost/duplicate behavior.
+`PR-009 — LLM summary` should add provider interfaces, an OpenAI-compatible adapter, prompt templates, strict JSON parsing, retries, and summary persistence.
