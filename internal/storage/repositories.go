@@ -87,3 +87,13 @@ type SummaryScheduleRepository interface {
 	CompleteRun(ctx context.Context, runID int64, status domain.JobStatus, collectionJobID, summaryID, exportID *int64, message *string) error
 	MarkScheduleRun(ctx context.Context, scheduleID int64, runAt time.Time) error
 }
+
+type JobRepository interface {
+	Enqueue(ctx context.Context, job domain.Job) (*domain.Job, error)
+	ClaimNext(ctx context.Context, workerID string, lease time.Duration) (*domain.Job, error)
+	Complete(ctx context.Context, jobID int64) error
+	Retry(ctx context.Context, jobID int64, availableAt time.Time, message string) error
+	Dead(ctx context.Context, jobID int64, message string) error
+	RecoverExpiredLeases(ctx context.Context) (int64, error)
+	ExtendLease(ctx context.Context, jobID int64, workerID string, lease time.Duration) error
+}

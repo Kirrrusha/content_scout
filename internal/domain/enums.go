@@ -32,10 +32,14 @@ type JobStatus string
 
 const (
 	JobStatusPending    JobStatus = "pending"
+	JobStatusRunning    JobStatus = "running"
+	JobStatusRetryWait  JobStatus = "retry_wait"
 	JobStatusCollecting JobStatus = "collecting"
 	JobStatusProcessing JobStatus = "processing"
 	JobStatusCompleted  JobStatus = "completed"
 	JobStatusFailed     JobStatus = "failed"
+	JobStatusDead       JobStatus = "dead"
+	JobStatusCancelled  JobStatus = "cancelled"
 )
 
 type ConfidenceLevel string

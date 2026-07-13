@@ -4,7 +4,7 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-017 Local Logging and 24-hour Retention`: project structure, configuration, HTTP health checks, service-token protected internal API, PostgreSQL connection, migrations, Docker Compose, local structured logs with 24-hour retention, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, native TDLib JSON adapter, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, LLM summary generation, summary history browsing, article draft conversion, Markdown export for Obsidian, scheduled summary runs, and optional Obsidian Local REST API note writes.
+This repository is currently at `PR-018 Reliable Job Queue`: project structure, configuration, HTTP health checks, service-token protected internal API, PostgreSQL connection, migrations, Docker Compose, local structured logs with 24-hour retention, durable PostgreSQL job queue with leases/retries/deduplication, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, native TDLib JSON adapter, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, LLM summary generation, summary history browsing, article draft conversion, Markdown export for Obsidian, scheduled summary runs, and optional Obsidian Local REST API note writes.
 
 ## Architecture
 
@@ -66,6 +66,7 @@ Authorization: Bearer <token>
 | `LOG_DIR` | no | `./data/logs` locally, `/data/logs` in Docker | Directory for local rotated log files. Empty disables file logging. |
 | `LOG_RETENTION` | no | `24h` | Deletes log files older than this duration. |
 | `LOG_ROTATION_INTERVAL` | no | `1h` | File rotation and cleanup tick interval. |
+| `WORKER_ID` | no | hostname-based | Stable id written to job locks and logs by worker processes. |
 | `TELEGRAM_BOT_TOKEN` | yes for `cmd/bot` | empty | Telegram Bot API token. If empty, the bot exits idle. |
 | `TELEGRAM_OWNER_ID` | yes for bot/API actions | `0` | Telegram user id allowed to control the bot and API flows. |
 | `TELEGRAM_API_ID` | yes for native TDLib | `0` | Telegram API id from my.telegram.org. |
@@ -272,6 +273,37 @@ If `OBSIDIAN_API_KEY` is set, exports are also written directly to Obsidian thro
 
 Scheduled summaries are stored in `summary_schedules` and executed by `cmd/summary-worker`. The MVP supports daily schedule strings in `HH:MM`, `daily@HH:MM`, or `@daily` format, IANA timezones, quiet-hour windows, summary format, and optional export to Obsidian. Each attempt is recorded in `schedule_runs`.
 
+## Job Queue
+
+Background work is coordinated through the PostgreSQL `jobs` table. Workers claim due jobs with `FOR UPDATE SKIP LOCKED`, set `locked_by` and `lease_expires_at`, and then mark the job as `completed`, `retry_wait`, or `dead`.
+
+The queue stores:
+
+- `type`, `status`, and JSON `payload`;
+- `attempt`, `max_attempts`, and `available_at`;
+- `locked_at`, `locked_by`, and `lease_expires_at`;
+- `last_error`, `started_at`, `finished_at`;
+- optional `deduplication_key`.
+
+Supported job types are:
+
+```text
+telegram_sync
+message_collection
+summary_generation
+article_generation
+obsidian_export
+scheduled_pipeline
+```
+
+`cmd/summary-worker` currently enqueues due schedules as `scheduled_pipeline` jobs and then processes queued jobs. Scheduled jobs use a per-schedule/per-local-day deduplication key, so repeated polling does not create duplicates. Temporary errors are retried with exponential backoff; permanent configuration/input errors go to `dead`.
+
+Multiple workers can run safely:
+
+```sh
+docker compose --profile worker up --scale summary-worker=3
+```
+
 ## Local Logs
 
 Services use `log/slog` and write to stdout plus hourly files under `LOG_DIR`.
@@ -331,6 +363,7 @@ The migrations create:
 - `obsidian_exports`
 - `summary_schedules`
 - `schedule_runs`
+- `jobs`
 
 Integration tests use `TEST_DATABASE_URL`. If it is not set, PostgreSQL integration tests are skipped.
 
@@ -349,4 +382,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-The planned PR sequence from the initial roadmap is complete through `PR-017`. The next step is `PR-018 Reliable Job Queue`.
+The planned PR sequence from the initial roadmap is complete through `PR-018`. The next step is `PR-019 Schedule Management API and Bot UI`.

@@ -18,6 +18,7 @@ type Config struct {
 	LogDir           string
 	LogRetention     time.Duration
 	LogRotation      time.Duration
+	WorkerID         string
 	TelegramBotToken string
 	TelegramOwnerID  int64
 	TelegramAPIID    int
@@ -43,6 +44,7 @@ func Load() (Config, error) {
 		LogFormat:        getEnv("LOG_FORMAT", "json"),
 		LogLevel:         getEnv("LOG_LEVEL", "info"),
 		LogDir:           getEnv("LOG_DIR", "./data/logs"),
+		WorkerID:         os.Getenv("WORKER_ID"),
 		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramAPIHash:  os.Getenv("TELEGRAM_API_HASH"),
 		TDLibDatabaseDir: getEnv("TDLIB_DATABASE_DIR", "./data/tdlib"),

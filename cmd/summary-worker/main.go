@@ -10,6 +10,7 @@ import (
 
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/config"
+	"github.com/kirilllebedenko/content_scout/internal/jobs"
 	"github.com/kirilllebedenko/content_scout/internal/logging"
 	"github.com/kirilllebedenko/content_scout/internal/obsidian"
 	"github.com/kirilllebedenko/content_scout/internal/scheduler"
@@ -56,7 +57,17 @@ func main() {
 	}
 	defer db.Close()
 
-	factory := tdlib.UnavailableClientFactory{}
+	factory := tdlib.NewClientFactory(tdlib.ClientConfig{
+		APIID:   cfg.TelegramAPIID,
+		APIHash: cfg.TelegramAPIHash,
+	})
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := tdlib.CloseClientFactory(shutdownCtx, factory); err != nil {
+			logger.Error("tdlib shutdown failed", "error", err)
+		}
+	}()
 	userRepo := postgres.NewUserRepository(db)
 	sessionRepo := postgres.NewTelegramSessionRepository(db)
 	summaryRepo := postgres.NewSummaryRepository(db)
@@ -107,16 +118,36 @@ func main() {
 		exporter,
 		logger,
 	)
+	jobRepo := postgres.NewJobRepository(db)
+	workerID := cfg.WorkerID
+	if workerID == "" {
+		hostname, _ := os.Hostname()
+		workerID = "summary-worker"
+		if hostname != "" {
+			workerID += "-" + hostname
+		}
+	}
+	jobWorker := jobs.NewWorker(jobRepo, jobs.ScheduledPipelineHandler{Scheduler: service}, logger, workerID)
 
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-	logger.Info("summary scheduler worker started")
+	logger.Info("summary scheduler worker started", "worker_id", workerID)
 	for {
-		count, err := service.RunDue(ctx)
+		count, err := service.EnqueueDue(ctx, jobRepo)
 		if err != nil {
-			logger.Warn("run due schedules failed", "error", err)
+			logger.Warn("enqueue due schedules failed", "error", err)
 		} else if count > 0 {
-			logger.Info("due schedules processed", "count", count)
+			logger.Info("due schedules enqueued", "count", count)
+		}
+		for {
+			claimed, err := jobWorker.RunOnce(ctx)
+			if err != nil {
+				logger.Warn("run queued job failed", "error", err)
+				break
+			}
+			if !claimed {
+				break
+			}
 		}
 		select {
 		case <-ctx.Done():

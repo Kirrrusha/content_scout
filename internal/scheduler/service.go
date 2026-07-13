@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -14,6 +15,10 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/storage"
 	"github.com/kirilllebedenko/content_scout/internal/summary"
 )
+
+type JobQueue interface {
+	Enqueue(ctx context.Context, job domain.Job) (*domain.Job, error)
+}
 
 type Collector interface {
 	CollectGroup(ctx context.Context, req collection.Request) (*collection.Result, error)
@@ -57,6 +62,40 @@ func (s *Service) RunDue(ctx context.Context) (int, error) {
 		}
 		if err := s.RunSchedule(ctx, schedule); err != nil {
 			s.logger.Warn("scheduled summary failed", "schedule_id", schedule.ID, "error", err)
+		}
+		count++
+	}
+	return count, nil
+}
+
+func (s *Service) EnqueueDue(ctx context.Context, queue JobQueue) (int, error) {
+	if queue == nil {
+		return 0, fmt.Errorf("job queue is not configured")
+	}
+	items, err := s.schedules.ListEnabled(ctx)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	now := s.now()
+	for _, schedule := range items {
+		if !IsDue(schedule, now) {
+			continue
+		}
+		payload, err := json.Marshal(domain.JobPayloadScheduledPipeline{Schedule: schedule})
+		if err != nil {
+			return count, fmt.Errorf("marshal scheduled pipeline payload: %w", err)
+		}
+		key := scheduleDeduplicationKey(schedule, now)
+		if _, err := queue.Enqueue(ctx, domain.Job{
+			Type:             domain.JobTypeScheduledPipeline,
+			Status:           domain.JobStatusPending,
+			Payload:          payload,
+			MaxAttempts:      4,
+			AvailableAt:      now,
+			DeduplicationKey: &key,
+		}); err != nil {
+			return count, fmt.Errorf("enqueue scheduled pipeline: %w", err)
 		}
 		count++
 	}
@@ -191,4 +230,13 @@ func inQuietHours(now time.Time, start, end string) bool {
 		return minutes >= startTotal && minutes < endTotal
 	}
 	return minutes >= startTotal || minutes < endTotal
+}
+
+func scheduleDeduplicationKey(schedule domain.SummarySchedule, now time.Time) string {
+	location, err := time.LoadLocation(schedule.Timezone)
+	if err != nil {
+		location = time.UTC
+	}
+	localNow := now.In(location)
+	return fmt.Sprintf("scheduled_pipeline:%d:%04d-%02d-%02d", schedule.ID, localNow.Year(), localNow.Month(), localNow.Day())
 }

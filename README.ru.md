@@ -4,7 +4,7 @@
 
 Персональный сервис для сводок из Telegram с экспортом Markdown-файлов в Obsidian.
 
-Текущее состояние репозитория: `PR-017 Local Logging and 24-hour Retention`. Уже есть структура проекта, конфигурация, HTTP health checks, protected internal API через service token, подключение PostgreSQL, миграции, Docker Compose, локальные structured logs с 24-hour retention, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, native TDLib JSON adapter, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей, генерация summary через LLM, просмотр истории summary, конвертация summary/topics в черновики статей, Markdown export для Obsidian, scheduled summary runs и optional Obsidian Local REST API note writes.
+Текущее состояние репозитория: `PR-018 Reliable Job Queue`. Уже есть структура проекта, конфигурация, HTTP health checks, protected internal API через service token, подключение PostgreSQL, миграции, Docker Compose, локальные structured logs с 24-hour retention, durable PostgreSQL job queue с leases/retries/deduplication, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, native TDLib JSON adapter, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей, генерация summary через LLM, просмотр истории summary, конвертация summary/topics в черновики статей, Markdown export для Obsidian, scheduled summary runs и optional Obsidian Local REST API note writes.
 
 ## Архитектура
 
@@ -66,6 +66,7 @@ Authorization: Bearer <token>
 | `LOG_DIR` | нет | `./data/logs` локально, `/data/logs` в Docker | Директория для локальных rotated log files. Пустое значение отключает file logging. |
 | `LOG_RETENTION` | нет | `24h` | Удалять log files старше этого duration. |
 | `LOG_ROTATION_INTERVAL` | нет | `1h` | Интервал ротации файлов и cleanup loop. |
+| `WORKER_ID` | нет | hostname-based | Стабильный id, который worker processes пишут в job locks и logs. |
 | `TELEGRAM_BOT_TOKEN` | да для `cmd/bot` | empty | Telegram Bot API token. Если пустой, бот выходит в idle-режиме. |
 | `TELEGRAM_OWNER_ID` | да для действий bot/API | `0` | Telegram user id, которому разрешено управлять ботом и API flow. |
 | `TELEGRAM_API_ID` | да для native TDLib | `0` | Telegram API id из my.telegram.org. |
@@ -272,6 +273,37 @@ Markdown exports сохраняются в `EXPORT_DIR`, содержат YAML f
 
 Scheduled summaries хранятся в `summary_schedules` и выполняются через `cmd/summary-worker`. MVP поддерживает daily schedule strings в формате `HH:MM`, `daily@HH:MM` или `@daily`, IANA timezones, quiet-hour windows, summary format и optional export to Obsidian. Каждая попытка записывается в `schedule_runs`.
 
+## Очередь Задач
+
+Фоновые задачи координируются через PostgreSQL table `jobs`. Workers забирают due jobs через `FOR UPDATE SKIP LOCKED`, выставляют `locked_by` и `lease_expires_at`, а затем переводят job в `completed`, `retry_wait` или `dead`.
+
+Очередь хранит:
+
+- `type`, `status` и JSON `payload`;
+- `attempt`, `max_attempts` и `available_at`;
+- `locked_at`, `locked_by` и `lease_expires_at`;
+- `last_error`, `started_at`, `finished_at`;
+- опциональный `deduplication_key`.
+
+Поддерживаемые job types:
+
+```text
+telegram_sync
+message_collection
+summary_generation
+article_generation
+obsidian_export
+scheduled_pipeline
+```
+
+`cmd/summary-worker` сейчас кладёт due schedules в `scheduled_pipeline` jobs и затем обрабатывает очередь. Scheduled jobs используют deduplication key на schedule/local day, поэтому повторный polling не создаёт дубли. Временные ошибки повторяются с exponential backoff; постоянные configuration/input errors уходят в `dead`.
+
+Можно безопасно запускать несколько workers:
+
+```sh
+docker compose --profile worker up --scale summary-worker=3
+```
+
 ## Локальные Логи
 
 Сервисы используют `log/slog` и пишут одновременно в stdout и hourly files внутри `LOG_DIR`.
@@ -331,6 +363,7 @@ http://localhost:8080/ready
 - `obsidian_exports`
 - `summary_schedules`
 - `schedule_runs`
+- `jobs`
 
 Интеграционные тесты используют `TEST_DATABASE_URL`. Если переменная не задана, PostgreSQL integration tests пропускаются.
 
@@ -349,4 +382,4 @@ go test ./internal/storage/postgres
 
 ## Следующий PR
 
-Плановая цепочка из исходного roadmap выполнена до `PR-017`. Следующий этап — `PR-018 Reliable Job Queue`.
+Плановая цепочка из исходного roadmap выполнена до `PR-018`. Следующий этап — `PR-019 Schedule Management API and Bot UI`.

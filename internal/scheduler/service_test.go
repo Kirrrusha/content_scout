@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -27,6 +28,44 @@ func TestIsDueHonorsTimezoneAndQuietHours(t *testing.T) {
 	schedule.LastRunAt = &last
 	if IsDue(schedule, now) {
 		t.Fatal("schedule should not run twice on same local day")
+	}
+}
+
+func TestEnqueueDueCreatesScheduledPipelineJob(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 13, 9, 30, 0, 0, time.UTC)
+	repo := &fakeSchedules{enabled: []domain.SummarySchedule{{
+		ID:          5,
+		GroupID:     7,
+		Enabled:     true,
+		Cron:        "09:00",
+		Timezone:    "UTC",
+		SummaryType: "standard",
+	}}}
+	queue := &fakeQueue{}
+	service := NewService(42, repo, nil, nil, nil, nil)
+	service.now = func() time.Time { return now }
+
+	count, err := service.EnqueueDue(ctx, queue)
+	if err != nil {
+		t.Fatalf("EnqueueDue() error = %v", err)
+	}
+	if count != 1 || len(queue.jobs) != 1 {
+		t.Fatalf("count=%d jobs=%d", count, len(queue.jobs))
+	}
+	job := queue.jobs[0]
+	if job.Type != domain.JobTypeScheduledPipeline {
+		t.Fatalf("job type = %s", job.Type)
+	}
+	if job.DeduplicationKey == nil || *job.DeduplicationKey != "scheduled_pipeline:5:2026-07-13" {
+		t.Fatalf("dedup key = %v", job.DeduplicationKey)
+	}
+	var payload domain.JobPayloadScheduledPipeline
+	if err := json.Unmarshal(job.Payload, &payload); err != nil {
+		t.Fatalf("payload decode: %v", err)
+	}
+	if payload.Schedule.ID != 5 || payload.Schedule.GroupID != 7 {
+		t.Fatalf("payload = %+v", payload)
 	}
 }
 
@@ -61,6 +100,7 @@ type fakeSchedules struct {
 	completedStatus  domain.JobStatus
 	summaryID        *int64
 	markedScheduleID int64
+	enabled          []domain.SummarySchedule
 }
 
 func (f *fakeSchedules) Create(context.Context, domain.SummarySchedule) (*domain.SummarySchedule, error) {
@@ -73,7 +113,7 @@ func (f *fakeSchedules) ListByUser(context.Context, int64) ([]domain.SummarySche
 	return nil, nil
 }
 func (f *fakeSchedules) ListEnabled(context.Context) ([]domain.SummarySchedule, error) {
-	return nil, nil
+	return f.enabled, nil
 }
 func (f *fakeSchedules) CreateRun(_ context.Context, run domain.ScheduleRun) (*domain.ScheduleRun, error) {
 	f.runID++
@@ -103,6 +143,15 @@ func (f *fakeCollector) CollectGroup(_ context.Context, req collection.Request) 
 type fakeSummarizer struct {
 	request summary.GenerateRequest
 	result  *summary.GenerateResult
+}
+
+type fakeQueue struct {
+	jobs []domain.Job
+}
+
+func (f *fakeQueue) Enqueue(_ context.Context, job domain.Job) (*domain.Job, error) {
+	f.jobs = append(f.jobs, job)
+	return &f.jobs[len(f.jobs)-1], nil
 }
 
 func (f *fakeSummarizer) GenerateFromCollection(_ context.Context, req summary.GenerateRequest) (*summary.GenerateResult, error) {
