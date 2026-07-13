@@ -69,6 +69,7 @@ func main() {
 		postgres.NewSourceGroupRepository(db),
 		postgres.NewTelegramChatRepository(db),
 	)
+	summaryRepo := postgres.NewSummaryRepository(db)
 	collectionService := collection.NewService(
 		cfg.TelegramOwnerID,
 		userRepo,
@@ -83,12 +84,13 @@ func main() {
 		cfg.TelegramOwnerID,
 		userRepo,
 		postgres.NewMessageCollectionRepository(db),
-		postgres.NewSummaryRepository(db),
+		summaryRepo,
 		postgres.NewTelegramChatRepository(db),
 		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: 60 * time.Second}),
 	)
+	summaryBrowser := summary.NewBrowser(cfg.TelegramOwnerID, userRepo, summaryRepo)
 
-	service, err := tgbot.NewServiceWithServices(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, syncService, groupService, collectionService, summaryService, logger)
+	service, err := tgbot.NewServiceWithBrowser(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, syncService, groupService, collectionService, summaryService, summaryBrowser, logger)
 	if err != nil {
 		logger.Error("create bot service failed", "error", err)
 		os.Exit(1)

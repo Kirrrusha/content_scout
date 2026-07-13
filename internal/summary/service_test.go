@@ -97,8 +97,12 @@ func (f *fakeCollections) ListMessages(context.Context, int64) ([]domain.Collect
 }
 
 type fakeSummaries struct {
-	summary domain.Summary
-	status  domain.JobStatus
+	summary    domain.Summary
+	found      *domain.Summary
+	owned      []domain.Summary
+	status     domain.JobStatus
+	listUserID int64
+	listLimit  int
 }
 
 func (f *fakeSummaries) CreateJob(_ context.Context, job domain.SummaryJob) (*domain.SummaryJob, error) {
@@ -114,7 +118,17 @@ func (f *fakeSummaries) CreateSummary(_ context.Context, summary domain.Summary,
 	f.summary = summary
 	return &summary, nil
 }
-func (f *fakeSummaries) FindSummary(context.Context, int64) (*domain.Summary, error) { return nil, nil }
+func (f *fakeSummaries) FindSummary(context.Context, int64) (*domain.Summary, error) {
+	return f.found, nil
+}
+func (f *fakeSummaries) FindSummaryByUser(context.Context, int64, int64) (*domain.Summary, error) {
+	return f.found, nil
+}
+func (f *fakeSummaries) ListSummariesByUser(_ context.Context, userID int64, limit int) ([]domain.Summary, error) {
+	f.listUserID = userID
+	f.listLimit = limit
+	return f.owned, nil
+}
 func (f *fakeSummaries) ListTopics(context.Context, int64) ([]domain.SummaryTopic, error) {
 	return nil, nil
 }

@@ -203,6 +203,15 @@ func pathInt64(w http.ResponseWriter, r *http.Request, name string) (int64, bool
 	return value, true
 }
 
+func queryInt64(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
+	value, err := strconv.ParseInt(r.URL.Query().Get(name), 10, 64)
+	if err != nil || value <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid " + name})
+		return 0, false
+	}
+	return value, true
+}
+
 func groupResponses(groups []domain.SourceGroup) []groupResponse {
 	responses := make([]groupResponse, 0, len(groups))
 	for _, group := range groups {

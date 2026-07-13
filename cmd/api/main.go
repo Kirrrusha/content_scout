@@ -61,6 +61,7 @@ func main() {
 		postgres.NewSourceGroupRepository(db),
 		postgres.NewTelegramChatRepository(db),
 	)
+	summaryRepo := postgres.NewSummaryRepository(db)
 	collectionService := collection.NewService(
 		cfg.TelegramOwnerID,
 		userRepo,
@@ -75,12 +76,13 @@ func main() {
 		cfg.TelegramOwnerID,
 		userRepo,
 		postgres.NewMessageCollectionRepository(db),
-		postgres.NewSummaryRepository(db),
+		summaryRepo,
 		postgres.NewTelegramChatRepository(db),
 		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: 60 * time.Second}),
 	)
+	summaryBrowser := summary.NewBrowser(cfg.TelegramOwnerID, userRepo, summaryRepo)
 
-	server := httpserver.NewWithServices(cfg.HTTPAddr, db, logger, authService, syncService, groupService, collectionService, summaryService)
+	server := httpserver.NewWithBrowser(cfg.HTTPAddr, db, logger, authService, syncService, groupService, collectionService, summaryService, summaryBrowser)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Run()

@@ -4,7 +4,7 @@
 
 Персональный сервис для сводок из Telegram с экспортом Markdown-файлов в Obsidian.
 
-Текущее состояние репозитория: `PR-009 LLM summary`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей и генерация summary через LLM.
+Текущее состояние репозитория: `PR-010 Summary Bot UI`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей, генерация summary через LLM и просмотр истории summary в боте/API.
 
 ## Архитектура
 
@@ -21,10 +21,10 @@
 - `internal/summary/deduplicator`: группировка дублей по exact hash, общей ссылке и Jaccard similarity.
 - `internal/summary/llm`: provider interfaces, OpenAI-compatible adapter, строгий JSON parsing и retry handling.
 - `internal/summary/pipeline`: общий filter + deduplication pipeline для collected messages.
-- `internal/summary`: сервис генерации summary из collection jobs.
+- `internal/summary`: сервис генерации summary из collection jobs и owner-checked browser для истории summary.
 - `internal/storage`: repository interfaces.
 - `internal/storage/postgres`: PostgreSQL connection, миграции и реализации repositories.
-- `internal/telegram/bot`: Telegram Bot API polling, owner guard, меню, callback routing, просмотр кэша папок/чатов и in-memory dialog state.
+- `internal/telegram/bot`: Telegram Bot API polling, owner guard, меню, callback routing, просмотр кэша папок/чатов, UI истории summary, карточки тем и in-memory dialog state.
 - `internal/telegram/tdlib`: TDLib client interface, state machine авторизации, сохранение сессии, sync service для папок/чатов и placeholder native adapter.
 - `migrations`: обратимые SQL-миграции.
 
@@ -84,6 +84,10 @@ make docker-down
 /group_remove_chat <group_id> <chat_id>
 /collect_group <group_id> [new|24h|3d|week|latest_n] [limit]
 /summarize_collection <collection_job_id> [short|standard|detailed]
+/summaries
+/summary <summary_id>
+/summary_topics <summary_id>
+/topic <summary_id> <position>
 /settings
 ```
 
@@ -153,6 +157,9 @@ POST   /collections/group/{id}
 
 ```text
 POST   /summaries/from-collection/{id}
+GET    /summaries?telegram_user_id=...&limit=...
+GET    /summaries/{id}?telegram_user_id=...
+GET    /summaries/{id}/topics?telegram_user_id=...
 ```
 
 Тело запроса:
@@ -161,7 +168,7 @@ POST   /summaries/from-collection/{id}
 {"telegram_user_id": 123, "format": "standard"}
 ```
 
-Генерация summary использует collected messages, filter/deduplication pipeline, OpenAI-compatible chat completions provider, строгую JSON validation, retry handling и сохраняет `summary_jobs`, `summaries` и `summary_topics`.
+Генерация summary использует collected messages, filter/deduplication pipeline, OpenAI-compatible chat completions provider, строгую JSON validation, retry handling и сохраняет `summary_jobs`, `summaries` и `summary_topics`. Просмотр summary проверяет владельца и отдаёт последние summary, полный markdown одной summary и упорядоченные карточки тем для навигации в боте.
 
 ## Docker
 
@@ -213,4 +220,4 @@ go test ./internal/storage/postgres
 
 ## Следующий PR
 
-`PR-010 — Summary Bot UI`: история summary, карточки тем, pagination, ссылки на источники и owner-checked callback navigation.
+`PR-011 — Article conversion`: конвертация сохранённых summary/topics в черновики статей.

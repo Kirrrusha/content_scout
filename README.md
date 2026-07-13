@@ -4,7 +4,7 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-009 LLM summary`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, and LLM summary generation.
+This repository is currently at `PR-010 Summary Bot UI`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, LLM summary generation, and summary history browsing in the bot/API.
 
 ## Architecture
 
@@ -23,8 +23,8 @@ This repository is currently at `PR-009 LLM summary`: project structure, configu
 - `internal/summary/deduplicator`: duplicate clustering by exact hash, shared URL, and Jaccard similarity.
 - `internal/summary/llm`: LLM provider interfaces, OpenAI-compatible adapter, strict JSON parsing, and retry handling.
 - `internal/summary/pipeline`: composed filter + deduplication processing for collected messages.
-- `internal/summary`: summary generation service from collection jobs.
-- `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, cached folder/chat views, and in-memory dialog state.
+- `internal/summary`: summary generation service from collection jobs and owner-checked summary browser.
+- `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, cached folder/chat views, summary history UI, topic cards, and in-memory dialog state.
 - `internal/telegram/tdlib`: TDLib client interface, authorization state machine, session persistence, folder/chat sync service, and unavailable native adapter placeholder.
 - `migrations`: reversible SQL migrations.
 
@@ -84,6 +84,10 @@ Bot commands currently available:
 /group_remove_chat <group_id> <chat_id>
 /collect_group <group_id> [new|24h|3d|week|latest_n] [limit]
 /summarize_collection <collection_job_id> [short|standard|detailed]
+/summaries
+/summary <summary_id>
+/summary_topics <summary_id>
+/topic <summary_id> <position>
 /settings
 ```
 
@@ -153,6 +157,9 @@ Internal summary endpoint:
 
 ```text
 POST   /summaries/from-collection/{id}
+GET    /summaries?telegram_user_id=...&limit=...
+GET    /summaries/{id}?telegram_user_id=...
+GET    /summaries/{id}/topics?telegram_user_id=...
 ```
 
 Request body:
@@ -161,7 +168,7 @@ Request body:
 {"telegram_user_id": 123, "format": "standard"}
 ```
 
-Summary generation uses the collected messages, filter/deduplication pipeline, an OpenAI-compatible chat completions provider, strict JSON validation, retry handling, and persists `summary_jobs`, `summaries`, and `summary_topics`.
+Summary generation uses the collected messages, filter/deduplication pipeline, an OpenAI-compatible chat completions provider, strict JSON validation, retry handling, and persists `summary_jobs`, `summaries`, and `summary_topics`. Summary browsing is owner-checked and exposes the latest summaries, full markdown for a single summary, and ordered topic cards for bot navigation.
 
 ## Docker
 
@@ -213,4 +220,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-`PR-010 — Summary Bot UI` should add summary history, topic cards, pagination, source links, and owner-checked callback navigation.
+`PR-011 — Article conversion` should convert saved summaries/topics into article drafts.

@@ -26,6 +26,7 @@ type Server struct {
 	groups     GroupController
 	collector  CollectionController
 	summary    SummaryController
+	browser    SummaryBrowser
 }
 
 type AuthController interface {
@@ -61,6 +62,12 @@ type SummaryController interface {
 	GenerateFromCollection(ctx context.Context, req summary.GenerateRequest) (*summary.GenerateResult, error)
 }
 
+type SummaryBrowser interface {
+	ListSummaries(ctx context.Context, telegramUserID int64, limit int) ([]domain.Summary, error)
+	GetSummary(ctx context.Context, telegramUserID, summaryID int64) (*domain.Summary, error)
+	ListTopics(ctx context.Context, telegramUserID, summaryID int64) ([]domain.SummaryTopic, error)
+}
+
 func New(addr string, db *sql.DB, logger *slog.Logger) *Server {
 	return NewWithAuth(addr, db, logger, nil)
 }
@@ -82,6 +89,10 @@ func NewWithRuntime(addr string, db *sql.DB, logger *slog.Logger, auth AuthContr
 }
 
 func NewWithServices(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summaryService SummaryController) *Server {
+	return NewWithBrowser(addr, db, logger, auth, sync, groups, collector, summaryService, nil)
+}
+
+func NewWithBrowser(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summaryService SummaryController, browser SummaryBrowser) *Server {
 	server := &Server{
 		db:        db,
 		logger:    logger,
@@ -90,6 +101,7 @@ func NewWithServices(addr string, db *sql.DB, logger *slog.Logger, auth AuthCont
 		groups:    groups,
 		collector: collector,
 		summary:   summaryService,
+		browser:   browser,
 	}
 
 	mux := http.NewServeMux()
@@ -113,6 +125,9 @@ func NewWithServices(addr string, db *sql.DB, logger *slog.Logger, auth AuthCont
 	mux.HandleFunc("DELETE /groups/{id}/chats/{chatId}", server.groupChatsRemove)
 	mux.HandleFunc("POST /collections/group/{id}", server.collectionGroupCreate)
 	mux.HandleFunc("POST /summaries/from-collection/{id}", server.summaryFromCollection)
+	mux.HandleFunc("GET /summaries", server.summariesList)
+	mux.HandleFunc("GET /summaries/{id}", server.summaryGet)
+	mux.HandleFunc("GET /summaries/{id}/topics", server.summaryTopics)
 
 	server.httpServer = &http.Server{
 		Addr:              addr,

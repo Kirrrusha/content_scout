@@ -56,6 +56,8 @@ type SummaryRepository interface {
 	UpdateJobStatus(ctx context.Context, jobID int64, status domain.JobStatus, message *string) error
 	CreateSummary(ctx context.Context, summary domain.Summary, topics []domain.SummaryTopic) (*domain.Summary, error)
 	FindSummary(ctx context.Context, summaryID int64) (*domain.Summary, error)
+	FindSummaryByUser(ctx context.Context, userID, summaryID int64) (*domain.Summary, error)
+	ListSummariesByUser(ctx context.Context, userID int64, limit int) ([]domain.Summary, error)
 	ListTopics(ctx context.Context, summaryID int64) ([]domain.SummaryTopic, error)
 }
 

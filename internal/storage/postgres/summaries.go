@@ -90,6 +90,53 @@ func (r *SummaryRepository) FindSummary(ctx context.Context, summaryID int64) (*
 	return summary, nil
 }
 
+func (r *SummaryRepository) FindSummaryByUser(ctx context.Context, userID, summaryID int64) (*domain.Summary, error) {
+	summary, err := scanSummary(r.db.QueryRowContext(ctx, `
+		SELECT s.id, s.job_id, s.title, s.overview, s.messages_count, s.sources_count, s.topics_count, s.markdown, s.created_at
+		FROM summaries s
+		JOIN summary_jobs j ON j.id = s.job_id
+		WHERE j.user_id = $1 AND s.id = $2
+	`, userID, summaryID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find summary by user: %w", err)
+	}
+	return summary, nil
+}
+
+func (r *SummaryRepository) ListSummariesByUser(ctx context.Context, userID int64, limit int) ([]domain.Summary, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT s.id, s.job_id, s.title, s.overview, s.messages_count, s.sources_count, s.topics_count, s.markdown, s.created_at
+		FROM summaries s
+		JOIN summary_jobs j ON j.id = s.job_id
+		WHERE j.user_id = $1
+		ORDER BY s.created_at DESC, s.id DESC
+		LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list summaries by user: %w", err)
+	}
+	defer rows.Close()
+
+	var summaries []domain.Summary
+	for rows.Next() {
+		summary, err := scanSummary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan summary: %w", err)
+		}
+		summaries = append(summaries, *summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate summaries: %w", err)
+	}
+	return summaries, nil
+}
+
 func (r *SummaryRepository) ListTopics(ctx context.Context, summaryID int64) ([]domain.SummaryTopic, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, summary_id, title, short_summary, full_summary, category, importance, confidence, messages_count, sources_count, position

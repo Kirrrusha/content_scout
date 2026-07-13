@@ -326,6 +326,71 @@ func TestRouterSummarizeCollectionCommand(t *testing.T) {
 	}
 }
 
+func TestRouterSummariesCommand(t *testing.T) {
+	ctx := context.Background()
+	browser := &fakeSummaryBrowserController{
+		summaries: []domain.Summary{{ID: 10, Title: "Digest", TopicsCount: 2, MessagesCount: 12, SourcesCount: 3}},
+	}
+	router := NewRouterWithBrowser(42, NewMemoryStateStore(), nil, nil, nil, nil, nil, browser)
+
+	out, err := router.Handle(ctx, Incoming{
+		Kind:   IncomingMessage,
+		UserID: 42,
+		ChatID: 100,
+		Text:   "/summaries",
+	})
+	if err != nil {
+		t.Fatalf("Handle(summaries) error = %v", err)
+	}
+	if browser.listUserID != 42 || browser.listLimit != 10 {
+		t.Fatalf("list user=%d limit=%d", browser.listUserID, browser.listLimit)
+	}
+	if !strings.Contains(out.Text, "Digest") || len(out.Menu) < 2 || out.Menu[0][0].Data != "sum:open:10" {
+		t.Fatalf("output = %q menu=%+v", out.Text, out.Menu)
+	}
+}
+
+func TestRouterSummaryTopicCallback(t *testing.T) {
+	ctx := context.Background()
+	browser := &fakeSummaryBrowserController{
+		card: &summary.TopicCard{
+			Summary: domain.Summary{ID: 10, Title: "Digest"},
+			Topic: domain.SummaryTopic{
+				Title:         "Go",
+				ShortSummary:  "Short",
+				FullSummary:   "Full",
+				Importance:    8,
+				Confidence:    domain.ConfidenceHigh,
+				MessagesCount: 4,
+			},
+			Index: 1,
+			Total: 2,
+		},
+	}
+	router := NewRouterWithBrowser(42, NewMemoryStateStore(), nil, nil, nil, nil, nil, browser)
+
+	out, err := router.Handle(ctx, Incoming{
+		Kind:            IncomingCallback,
+		UserID:          42,
+		ChatID:          100,
+		CallbackID:      "callback-1",
+		CallbackData:    "sum:topic:10:1",
+		CallbackMessage: 7,
+	})
+	if err != nil {
+		t.Fatalf("Handle(topic callback) error = %v", err)
+	}
+	if browser.cardSummaryID != 10 || browser.cardPosition != 1 {
+		t.Fatalf("card summary=%d position=%d", browser.cardSummaryID, browser.cardPosition)
+	}
+	if out.EditMessageID != 7 || out.CallbackID != "callback-1" {
+		t.Fatalf("out = %+v", out)
+	}
+	if !strings.Contains(out.Text, "Go") || out.Menu[0][1].Data != "sum:topic:10:2" {
+		t.Fatalf("output = %q menu=%+v", out.Text, out.Menu)
+	}
+}
+
 type fakeAuthController struct {
 	started     bool
 	deleted     bool
@@ -451,4 +516,40 @@ type fakeSummaryController struct {
 func (f *fakeSummaryController) GenerateFromCollection(_ context.Context, req summary.GenerateRequest) (*summary.GenerateResult, error) {
 	f.request = req
 	return f.result, nil
+}
+
+type fakeSummaryBrowserController struct {
+	summaries     []domain.Summary
+	summary       *domain.Summary
+	topics        []domain.SummaryTopic
+	card          *summary.TopicCard
+	listUserID    int64
+	listLimit     int
+	getSummaryID  int64
+	cardSummaryID int64
+	cardPosition  int
+}
+
+func (f *fakeSummaryBrowserController) ListSummaries(_ context.Context, telegramUserID int64, limit int) ([]domain.Summary, error) {
+	f.listUserID = telegramUserID
+	f.listLimit = limit
+	return f.summaries, nil
+}
+
+func (f *fakeSummaryBrowserController) GetSummary(_ context.Context, _ int64, summaryID int64) (*domain.Summary, error) {
+	f.getSummaryID = summaryID
+	if f.summary != nil {
+		return f.summary, nil
+	}
+	return &domain.Summary{ID: summaryID, Title: "Digest", Overview: "Overview", TopicsCount: 2, MessagesCount: 12, SourcesCount: 3}, nil
+}
+
+func (f *fakeSummaryBrowserController) ListTopics(context.Context, int64, int64) ([]domain.SummaryTopic, error) {
+	return f.topics, nil
+}
+
+func (f *fakeSummaryBrowserController) TopicCard(_ context.Context, _ int64, summaryID int64, position int) (*summary.TopicCard, error) {
+	f.cardSummaryID = summaryID
+	f.cardPosition = position
+	return f.card, nil
 }
