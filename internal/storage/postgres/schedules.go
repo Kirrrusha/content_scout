@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -39,6 +40,28 @@ func (r *SummaryScheduleRepository) ListByUser(ctx context.Context, userID int64
 	return r.list(ctx, `WHERE user_id = $1 ORDER BY id`, userID)
 }
 
+func (r *SummaryScheduleRepository) FindByUser(ctx context.Context, userID, scheduleID int64) (*domain.SummarySchedule, error) {
+	schedule, err := scanSchedule(r.db.QueryRowContext(ctx, `
+		SELECT id, user_id, group_id, cron, timezone, enabled, summary_type, quiet_hours_start, quiet_hours_end, export_to_obsidian, last_run_at, created_at, updated_at
+		FROM summary_schedules
+		WHERE user_id = $1 AND id = $2
+	`, userID, scheduleID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find summary schedule: %w", err)
+	}
+	return schedule, nil
+}
+
+func (r *SummaryScheduleRepository) Delete(ctx context.Context, userID, scheduleID int64) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM summary_schedules WHERE user_id = $1 AND id = $2`, userID, scheduleID); err != nil {
+		return fmt.Errorf("delete summary schedule: %w", err)
+	}
+	return nil
+}
+
 func (r *SummaryScheduleRepository) ListEnabled(ctx context.Context) ([]domain.SummarySchedule, error) {
 	return r.list(ctx, `WHERE enabled = true ORDER BY id`)
 }
@@ -64,6 +87,35 @@ func (r *SummaryScheduleRepository) list(ctx context.Context, clause string, arg
 		return nil, fmt.Errorf("iterate summary schedules: %w", err)
 	}
 	return schedules, nil
+}
+
+func (r *SummaryScheduleRepository) ListRuns(ctx context.Context, scheduleID int64, limit int) ([]domain.ScheduleRun, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, schedule_id, collection_job_id, summary_id, export_id, status, error, started_at, completed_at
+		FROM schedule_runs
+		WHERE schedule_id = $1
+		ORDER BY started_at DESC, id DESC
+		LIMIT $2
+	`, scheduleID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list schedule runs: %w", err)
+	}
+	defer rows.Close()
+	var runs []domain.ScheduleRun
+	for rows.Next() {
+		run, err := scanScheduleRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan schedule run: %w", err)
+		}
+		runs = append(runs, *run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate schedule runs: %w", err)
+	}
+	return runs, nil
 }
 
 func (r *SummaryScheduleRepository) CreateRun(ctx context.Context, run domain.ScheduleRun) (*domain.ScheduleRun, error) {

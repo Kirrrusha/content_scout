@@ -19,6 +19,7 @@ const (
 	ActionSelectedSources = "sources:selected"
 	ActionHistory         = "history:list"
 	ActionArticles        = "articles:list"
+	ActionSchedules       = "schedules:list"
 	ActionSettings        = "settings:open"
 	ActionBackHome        = "home"
 	ActionAuthConnect     = "auth:connect"
@@ -37,6 +38,7 @@ type Router struct {
 	browser   SummaryBrowserController
 	articles  ArticleController
 	exports   ExportController
+	schedules ScheduleController
 }
 
 func NewRouter(ownerID int64, states StateStore) *Router {
@@ -73,6 +75,10 @@ func NewRouterWithArticle(ownerID int64, states StateStore, auth AuthController,
 
 func NewRouterWithExports(ownerID int64, states StateStore, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summary SummaryController, browser SummaryBrowserController, articles ArticleController, exports ExportController) *Router {
 	return &Router{ownerID: ownerID, states: states, auth: auth, sync: sync, groups: groups, collector: collector, summary: summary, browser: browser, articles: articles, exports: exports}
+}
+
+func (r *Router) SetSchedules(controller ScheduleController) {
+	r.schedules = controller
 }
 
 func (r *Router) Handle(ctx context.Context, in Incoming) (Outgoing, error) {
@@ -163,6 +169,20 @@ func (r *Router) handleMessage(ctx context.Context, in Incoming) (Outgoing, erro
 		return r.exportSummary(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/export_summary")), 0, "")
 	case "settings":
 		return r.showSettings(ctx, in.ChatID, in.UserID, 0, "")
+	case "schedules":
+		return r.showSchedules(ctx, in.ChatID, in.UserID, 0, "")
+	case "schedule_create":
+		return r.createSchedule(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/schedule_create")))
+	case "schedule":
+		return r.showSchedule(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/schedule")), 0, "")
+	case "schedule_enable":
+		return r.setScheduleEnabled(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/schedule_enable")), true)
+	case "schedule_disable":
+		return r.setScheduleEnabled(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/schedule_disable")), false)
+	case "schedule_delete":
+		return r.deleteSchedule(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/schedule_delete")))
+	case "schedule_run":
+		return r.runSchedule(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/schedule_run")))
 	default:
 		if out, ok, err := r.handleDialogInput(ctx, in); ok || err != nil {
 			return out, err
@@ -204,6 +224,8 @@ func (r *Router) handleCallback(ctx context.Context, in Incoming) (Outgoing, err
 		out, err = r.showSummaries(ctx, in.ChatID, in.UserID, in.CallbackMessage, "История открыта.")
 	case ActionArticles:
 		out, err = r.showArticles(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Статьи открыты.")
+	case ActionSchedules:
+		out, err = r.showSchedules(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Расписания открыты.")
 	case ActionSettings:
 		out, err = r.showSettings(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Настройки открыты.")
 	case ActionAuthConnect:
@@ -260,6 +282,7 @@ func MainMenu() Menu {
 		{{Text: "Папки Telegram", Data: ActionFolders}, {Text: "Мои группы", Data: ActionGroups}},
 		{{Text: "Выбранные источники", Data: ActionSelectedSources}},
 		{{Text: "История", Data: ActionHistory}, {Text: "Статьи", Data: ActionArticles}},
+		{{Text: "Расписания", Data: ActionSchedules}},
 		{{Text: "Настройки", Data: ActionSettings}},
 	}
 }

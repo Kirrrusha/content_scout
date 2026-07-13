@@ -13,6 +13,7 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/config"
 	"github.com/kirilllebedenko/content_scout/internal/logging"
 	"github.com/kirilllebedenko/content_scout/internal/obsidian"
+	"github.com/kirilllebedenko/content_scout/internal/schedules"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/storage/postgres"
 	"github.com/kirilllebedenko/content_scout/internal/summary"
@@ -137,11 +138,13 @@ func main() {
 		)
 	}
 
+	scheduleService := schedules.NewService(cfg.TelegramOwnerID, userRepo, postgres.NewSummaryScheduleRepository(db), postgres.NewJobRepository(db))
 	service, err := tgbot.NewServiceWithExports(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, syncService, groupService, collectionService, summaryService, summaryBrowser, articleService, exportService, logger)
 	if err != nil {
 		logger.Error("create bot service failed", "error", err)
 		os.Exit(1)
 	}
+	service.SetSchedules(scheduleService)
 
 	if err := tgbot.RunWithShutdown(ctx, service); err != nil {
 		logger.Error("bot service failed", "error", err)

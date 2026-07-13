@@ -4,8 +4,6 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-018 Reliable Job Queue`: project structure, configuration, HTTP health checks, service-token protected internal API, PostgreSQL connection, migrations, Docker Compose, local structured logs with 24-hour retention, durable PostgreSQL job queue with leases/retries/deduplication, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, native TDLib JSON adapter, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, LLM summary generation, summary history browsing, article draft conversion, Markdown export for Obsidian, scheduled summary runs, and optional Obsidian Local REST API note writes.
-
 ## Architecture
 
 - `cmd/api`: internal HTTP API. Exposes `/health` and `/ready`.
@@ -141,6 +139,13 @@ Bot commands currently available:
 | `/export_article <article_id>` | Export an article draft to Markdown and optional Obsidian REST. |
 | `/export_summary <summary_id>` | Export a summary to Markdown and optional Obsidian REST. |
 | `/settings` | Open settings and account/session controls. |
+| `/schedules` | List configured schedules. |
+| `/schedule_create <group_id> <HH:MM> [timezone] [export:true\|false]` | Create a daily schedule for a source group. |
+| `/schedule <id>` | Show one schedule and its latest runs. |
+| `/schedule_enable <id>` | Enable a schedule. |
+| `/schedule_disable <id>` | Disable a schedule. |
+| `/schedule_delete <id>` | Delete a schedule. |
+| `/schedule_run <id>` | Queue a schedule for immediate execution. |
 
 Authorization inputs are routed through the TDLib state machine. Phone numbers, confirmation codes, and 2FA passwords are not logged or stored by the application.
 
@@ -273,6 +278,42 @@ If `OBSIDIAN_API_KEY` is set, exports are also written directly to Obsidian thro
 
 Scheduled summaries are stored in `summary_schedules` and executed by `cmd/summary-worker`. The MVP supports daily schedule strings in `HH:MM`, `daily@HH:MM`, or `@daily` format, IANA timezones, quiet-hour windows, summary format, and optional export to Obsidian. Each attempt is recorded in `schedule_runs`.
 
+Internal schedule endpoints:
+
+```text
+GET    /schedules?telegram_user_id=...
+POST   /schedules
+GET    /schedules/{id}?telegram_user_id=...
+PATCH  /schedules/{id}
+DELETE /schedules/{id}
+POST   /schedules/{id}/enable
+POST   /schedules/{id}/disable
+POST   /schedules/{id}/run
+GET    /schedules/{id}/runs?telegram_user_id=...&limit=...
+```
+
+Create/update body:
+
+```json
+{
+  "telegram_user_id": 123,
+  "source_group_id": 12,
+  "time": "09:00",
+  "timezone": "Europe/Amsterdam",
+  "quiet_hours_start": "23:00",
+  "quiet_hours_end": "07:00",
+  "summary_type": "standard",
+  "export_enabled": true,
+  "enabled": true
+}
+```
+
+Delete/enable/disable/run bodies use:
+
+```json
+{"telegram_user_id": 123}
+```
+
 ## Job Queue
 
 Background work is coordinated through the PostgreSQL `jobs` table. Workers claim due jobs with `FOR UPDATE SKIP LOCKED`, set `locked_by` and `lease_expires_at`, and then mark the job as `completed`, `retry_wait`, or `dead`.
@@ -382,4 +423,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-The planned PR sequence from the initial roadmap is complete through `PR-018`. The next step is `PR-019 Schedule Management API and Bot UI`.
+The planned PR sequence from the updated roadmap is complete through `PR-019`.

@@ -4,8 +4,6 @@
 
 Персональный сервис для сводок из Telegram с экспортом Markdown-файлов в Obsidian.
 
-Текущее состояние репозитория: `PR-018 Reliable Job Queue`. Уже есть структура проекта, конфигурация, HTTP health checks, protected internal API через service token, подключение PostgreSQL, миграции, Docker Compose, локальные structured logs с 24-hour retention, durable PostgreSQL job queue с leases/retries/deduplication, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, native TDLib JSON adapter, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей, генерация summary через LLM, просмотр истории summary, конвертация summary/topics в черновики статей, Markdown export для Obsidian, scheduled summary runs и optional Obsidian Local REST API note writes.
-
 ## Архитектура
 
 - `cmd/api`: внутренний HTTP API. Доступны `/health` и `/ready`.
@@ -141,6 +139,13 @@ Authorization: Bearer <token>
 | `/export_article <article_id>` | Экспортировать статью в Markdown и опционально в Obsidian REST. |
 | `/export_summary <summary_id>` | Экспортировать summary в Markdown и опционально в Obsidian REST. |
 | `/settings` | Открыть настройки и управление аккаунтом/сессией. |
+| `/schedules` | Показать настроенные расписания. |
+| `/schedule_create <group_id> <HH:MM> [timezone] [export:true\|false]` | Создать ежедневное расписание для группы источников. |
+| `/schedule <id>` | Показать одно расписание и последние запуски. |
+| `/schedule_enable <id>` | Включить расписание. |
+| `/schedule_disable <id>` | Отключить расписание. |
+| `/schedule_delete <id>` | Удалить расписание. |
+| `/schedule_run <id>` | Поставить расписание в очередь на немедленный запуск. |
 
 Данные авторизации проходят через TDLib state machine. Номера телефонов, коды подтверждения и 2FA-пароли не логируются и не сохраняются приложением.
 
@@ -273,6 +278,42 @@ Markdown exports сохраняются в `EXPORT_DIR`, содержат YAML f
 
 Scheduled summaries хранятся в `summary_schedules` и выполняются через `cmd/summary-worker`. MVP поддерживает daily schedule strings в формате `HH:MM`, `daily@HH:MM` или `@daily`, IANA timezones, quiet-hour windows, summary format и optional export to Obsidian. Каждая попытка записывается в `schedule_runs`.
 
+Внутренние endpoints расписаний:
+
+```text
+GET    /schedules?telegram_user_id=...
+POST   /schedules
+GET    /schedules/{id}?telegram_user_id=...
+PATCH  /schedules/{id}
+DELETE /schedules/{id}
+POST   /schedules/{id}/enable
+POST   /schedules/{id}/disable
+POST   /schedules/{id}/run
+GET    /schedules/{id}/runs?telegram_user_id=...&limit=...
+```
+
+Тело create/update:
+
+```json
+{
+  "telegram_user_id": 123,
+  "source_group_id": 12,
+  "time": "09:00",
+  "timezone": "Europe/Amsterdam",
+  "quiet_hours_start": "23:00",
+  "quiet_hours_end": "07:00",
+  "summary_type": "standard",
+  "export_enabled": true,
+  "enabled": true
+}
+```
+
+Тела delete/enable/disable/run:
+
+```json
+{"telegram_user_id": 123}
+```
+
 ## Очередь Задач
 
 Фоновые задачи координируются через PostgreSQL table `jobs`. Workers забирают due jobs через `FOR UPDATE SKIP LOCKED`, выставляют `locked_by` и `lease_expires_at`, а затем переводят job в `completed`, `retry_wait` или `dead`.
@@ -382,4 +423,4 @@ go test ./internal/storage/postgres
 
 ## Следующий PR
 
-Плановая цепочка из исходного roadmap выполнена до `PR-018`. Следующий этап — `PR-019 Schedule Management API and Bot UI`.
+Плановая цепочка из обновлённого roadmap выполнена до `PR-019`.

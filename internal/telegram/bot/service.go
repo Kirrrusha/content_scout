@@ -62,6 +62,10 @@ func NewServiceWithExports(token string, ownerID int64, auth AuthController, syn
 	}, nil
 }
 
+func (s *Service) SetSchedules(controller ScheduleController) {
+	s.router.SetSchedules(controller)
+}
+
 func (s *Service) Run(ctx context.Context) error {
 	updateConfig := tgbotapi.NewUpdate(0)
 	updateConfig.Timeout = 30

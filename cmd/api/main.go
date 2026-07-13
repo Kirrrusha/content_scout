@@ -14,6 +14,7 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/config"
 	"github.com/kirilllebedenko/content_scout/internal/logging"
 	"github.com/kirilllebedenko/content_scout/internal/obsidian"
+	"github.com/kirilllebedenko/content_scout/internal/schedules"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/storage/postgres"
 	"github.com/kirilllebedenko/content_scout/internal/summary"
@@ -129,6 +130,9 @@ func main() {
 		)
 	}
 
+	scheduleRepo := postgres.NewSummaryScheduleRepository(db)
+	jobRepo := postgres.NewJobRepository(db)
+	scheduleService := schedules.NewService(cfg.TelegramOwnerID, userRepo, scheduleRepo, jobRepo)
 	server := httpserver.NewWithOptions(
 		cfg.HTTPAddr,
 		db,
@@ -143,6 +147,7 @@ func main() {
 		articleService,
 		exportService,
 	)
+	server.SetSchedules(scheduleService)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Run()

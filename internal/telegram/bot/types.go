@@ -1,6 +1,11 @@
 package bot
 
-import "context"
+import (
+	"context"
+
+	"github.com/kirilllebedenko/content_scout/internal/domain"
+	"github.com/kirilllebedenko/content_scout/internal/schedules"
+)
 
 type IncomingKind string
 
@@ -34,6 +39,16 @@ type Outgoing struct {
 
 type Sender interface {
 	Send(ctx context.Context, out Outgoing) error
+}
+
+type ScheduleController interface {
+	List(ctx context.Context, telegramUserID int64) ([]domain.SummarySchedule, error)
+	Get(ctx context.Context, telegramUserID, scheduleID int64) (*domain.SummarySchedule, error)
+	Create(ctx context.Context, req schedules.Request) (*domain.SummarySchedule, error)
+	Delete(ctx context.Context, telegramUserID, scheduleID int64) error
+	SetEnabled(ctx context.Context, telegramUserID, scheduleID int64, enabled bool) (*domain.SummarySchedule, error)
+	Run(ctx context.Context, telegramUserID, scheduleID int64) (*domain.Job, error)
+	ListRuns(ctx context.Context, telegramUserID, scheduleID int64, limit int) ([]domain.ScheduleRun, error)
 }
 
 type MenuButton struct {

@@ -109,11 +109,20 @@ func (f *fakeSchedules) Create(context.Context, domain.SummarySchedule) (*domain
 func (f *fakeSchedules) Update(context.Context, domain.SummarySchedule) (*domain.SummarySchedule, error) {
 	return nil, nil
 }
+func (f *fakeSchedules) FindByUser(context.Context, int64, int64) (*domain.SummarySchedule, error) {
+	return nil, nil
+}
+func (f *fakeSchedules) Delete(context.Context, int64, int64) error {
+	return nil
+}
 func (f *fakeSchedules) ListByUser(context.Context, int64) ([]domain.SummarySchedule, error) {
 	return nil, nil
 }
 func (f *fakeSchedules) ListEnabled(context.Context) ([]domain.SummarySchedule, error) {
 	return f.enabled, nil
+}
+func (f *fakeSchedules) ListRuns(context.Context, int64, int) ([]domain.ScheduleRun, error) {
+	return nil, nil
 }
 func (f *fakeSchedules) CreateRun(_ context.Context, run domain.ScheduleRun) (*domain.ScheduleRun, error) {
 	f.runID++

@@ -34,8 +34,8 @@ func TestRouterStartShowsMainMenu(t *testing.T) {
 	if !strings.Contains(out.Text, "Telegram Summary Bot") {
 		t.Fatalf("Text = %q", out.Text)
 	}
-	if len(out.Menu) != 5 {
-		t.Fatalf("menu rows = %d, want 5", len(out.Menu))
+	if len(out.Menu) != 6 {
+		t.Fatalf("menu rows = %d, want 6", len(out.Menu))
 	}
 
 	state, ok, err := states.Get(ctx, 42)

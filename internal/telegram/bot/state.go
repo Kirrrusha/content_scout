@@ -15,6 +15,7 @@ const (
 	ViewSelectedSources DialogView = "selected_sources"
 	ViewHistory         DialogView = "history"
 	ViewArticles        DialogView = "articles"
+	ViewSchedules       DialogView = "schedules"
 	ViewSettings        DialogView = "settings"
 	ViewAuthPhone       DialogView = "auth_phone"
 	ViewAuthCode        DialogView = "auth_code"

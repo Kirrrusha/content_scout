@@ -81,8 +81,11 @@ type ObsidianExportRepository interface {
 type SummaryScheduleRepository interface {
 	Create(ctx context.Context, schedule domain.SummarySchedule) (*domain.SummarySchedule, error)
 	Update(ctx context.Context, schedule domain.SummarySchedule) (*domain.SummarySchedule, error)
+	FindByUser(ctx context.Context, userID, scheduleID int64) (*domain.SummarySchedule, error)
+	Delete(ctx context.Context, userID, scheduleID int64) error
 	ListByUser(ctx context.Context, userID int64) ([]domain.SummarySchedule, error)
 	ListEnabled(ctx context.Context) ([]domain.SummarySchedule, error)
+	ListRuns(ctx context.Context, scheduleID int64, limit int) ([]domain.ScheduleRun, error)
 	CreateRun(ctx context.Context, run domain.ScheduleRun) (*domain.ScheduleRun, error)
 	CompleteRun(ctx context.Context, runID int64, status domain.JobStatus, collectionJobID, summaryID, exportID *int64, message *string) error
 	MarkScheduleRun(ctx context.Context, scheduleID int64, runAt time.Time) error

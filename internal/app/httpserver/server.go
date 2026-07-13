@@ -16,6 +16,7 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/domain"
 	"github.com/kirilllebedenko/content_scout/internal/obsidian"
+	"github.com/kirilllebedenko/content_scout/internal/schedules"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/summary"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
@@ -34,6 +35,7 @@ type Server struct {
 	browser    SummaryBrowser
 	articles   ArticleController
 	exports    ExportController
+	schedules  ScheduleController
 }
 
 type Options struct {
@@ -108,6 +110,17 @@ type ArticleController interface {
 type ExportController interface {
 	ExportArticle(ctx context.Context, telegramUserID, articleID int64) (*obsidian.Result, error)
 	ExportSummary(ctx context.Context, telegramUserID, summaryID int64) (*obsidian.Result, error)
+}
+
+type ScheduleController interface {
+	List(ctx context.Context, telegramUserID int64) ([]domain.SummarySchedule, error)
+	Get(ctx context.Context, telegramUserID, scheduleID int64) (*domain.SummarySchedule, error)
+	Create(ctx context.Context, req schedules.Request) (*domain.SummarySchedule, error)
+	Update(ctx context.Context, scheduleID int64, req schedules.Request) (*domain.SummarySchedule, error)
+	Delete(ctx context.Context, telegramUserID, scheduleID int64) error
+	SetEnabled(ctx context.Context, telegramUserID, scheduleID int64, enabled bool) (*domain.SummarySchedule, error)
+	Run(ctx context.Context, telegramUserID, scheduleID int64) (*domain.Job, error)
+	ListRuns(ctx context.Context, telegramUserID, scheduleID int64, limit int) ([]domain.ScheduleRun, error)
 }
 
 func New(addr string, db *sql.DB, logger *slog.Logger) *Server {
@@ -193,6 +206,15 @@ func NewWithOptions(addr string, db *sql.DB, logger *slog.Logger, options Option
 	mux.HandleFunc("PATCH /articles/{id}", server.articleUpdate)
 	mux.HandleFunc("POST /exports/articles/{id}", server.exportArticle)
 	mux.HandleFunc("POST /exports/summaries/{id}", server.exportSummary)
+	mux.HandleFunc("GET /schedules", server.schedulesList)
+	mux.HandleFunc("POST /schedules", server.schedulesCreate)
+	mux.HandleFunc("GET /schedules/{id}", server.schedulesGet)
+	mux.HandleFunc("PATCH /schedules/{id}", server.schedulesUpdate)
+	mux.HandleFunc("DELETE /schedules/{id}", server.schedulesDelete)
+	mux.HandleFunc("POST /schedules/{id}/enable", server.schedulesEnable)
+	mux.HandleFunc("POST /schedules/{id}/disable", server.schedulesDisable)
+	mux.HandleFunc("POST /schedules/{id}/run", server.schedulesRun)
+	mux.HandleFunc("GET /schedules/{id}/runs", server.schedulesRuns)
 
 	handler := server.securityHeaders(server.authenticate(mux))
 	server.httpServer = &http.Server{
@@ -204,6 +226,10 @@ func NewWithOptions(addr string, db *sql.DB, logger *slog.Logger, options Option
 		IdleTimeout:       options.IdleTimeout,
 	}
 	return server
+}
+
+func (s *Server) SetSchedules(controller ScheduleController) {
+	s.schedules = controller
 }
 
 func (s *Server) Run() error {
