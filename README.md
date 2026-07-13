@@ -1,8 +1,10 @@
 # Telegram Summary Bot
 
+[Русская версия](README.ru.md)
+
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-004 TDLib authorization`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, and TDLib authorization state machine.
+This repository is currently at `PR-005 Telegram folders and chats`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, and folder/chat sync pipeline.
 
 ## Architecture
 
@@ -15,11 +17,11 @@ This repository is currently at `PR-004 TDLib authorization`: project structure,
 - `internal/domain`: core entities and enums.
 - `internal/storage`: repository interfaces.
 - `internal/storage/postgres`: PostgreSQL connection, migrations, repository implementations.
-- `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, and in-memory dialog state.
-- `internal/telegram/tdlib`: TDLib client interface, authorization state machine, session persistence, and unavailable native adapter placeholder.
+- `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, cached folder/chat views, and in-memory dialog state.
+- `internal/telegram/tdlib`: TDLib client interface, authorization state machine, session persistence, folder/chat sync service, and unavailable native adapter placeholder.
 - `migrations`: reversible SQL migrations.
 
-The native TDLib adapter is intentionally not connected yet. Authorization logic is implemented behind an interface and covered with fake clients, so the real adapter can be added without changing bot/API flows.
+The native TDLib adapter is intentionally not connected yet. Authorization and folder/chat sync logic are implemented behind interfaces and covered with fake clients, so the real adapter can be added without changing bot/API flows.
 
 ## Configuration
 
@@ -84,6 +86,16 @@ DELETE /telegram/session
 
 Request bodies use `telegram_user_id` plus the relevant field: `phone`, `code`, or `password`.
 
+Internal sync endpoints:
+
+```text
+POST   /telegram/sync
+GET    /telegram/folders?telegram_user_id=...
+GET    /telegram/chats?telegram_user_id=...
+```
+
+`POST /telegram/sync` uses `{"telegram_user_id": ...}`. Private chats are excluded from persistence by default. Cached chat responses include title, type, unread count, mute/archive flags, and last message id.
+
 ## Docker
 
 ```sh
@@ -132,4 +144,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-`PR-005 — Telegram folders and chats` should connect the native TDLib adapter enough to sync folders/chats, store unread counts, and show them through the bot.
+`PR-006 — Source groups` should add CRUD for user-defined source groups, adding/removing synced chats, importing from available Telegram folders once the native adapter exposes folder membership, and bot navigation for groups.

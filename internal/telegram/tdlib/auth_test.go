@@ -155,12 +155,15 @@ func (f fakeFactory) NewClient(string) (TelegramClient, error) {
 }
 
 type fakeClient struct {
-	state    AuthorizationState
-	started  bool
-	stopped  bool
-	phone    string
-	code     string
-	password string
+	state        AuthorizationState
+	started      bool
+	stopped      bool
+	phone        string
+	code         string
+	password     string
+	folders      []domain.TelegramFolder
+	mainChats    []domain.TelegramChat
+	archiveChats []domain.TelegramChat
 }
 
 func (c *fakeClient) Start(context.Context) error {
@@ -197,11 +200,14 @@ func (c *fakeClient) SubmitPassword(_ context.Context, password string) error {
 }
 
 func (c *fakeClient) ListFolders(context.Context) ([]domain.TelegramFolder, error) {
-	return nil, nil
+	return c.folders, nil
 }
 
-func (c *fakeClient) ListChats(context.Context, ChatList) ([]domain.TelegramChat, error) {
-	return nil, nil
+func (c *fakeClient) ListChats(_ context.Context, list ChatList) ([]domain.TelegramChat, error) {
+	if list == ChatListArchive {
+		return c.archiveChats, nil
+	}
+	return c.mainChats, nil
 }
 
 func (c *fakeClient) GetChatHistory(context.Context, int64, int64, int) ([]domain.TelegramMessage, error) {

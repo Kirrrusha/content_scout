@@ -26,6 +26,7 @@ type Router struct {
 	ownerID int64
 	states  StateStore
 	auth    AuthController
+	sync    SyncController
 }
 
 func NewRouter(ownerID int64, states StateStore) *Router {
@@ -34,6 +35,10 @@ func NewRouter(ownerID int64, states StateStore) *Router {
 
 func NewRouterWithAuth(ownerID int64, states StateStore, auth AuthController) *Router {
 	return &Router{ownerID: ownerID, states: states, auth: auth}
+}
+
+func NewRouterWithControllers(ownerID int64, states StateStore, auth AuthController, sync SyncController) *Router {
+	return &Router{ownerID: ownerID, states: states, auth: auth, sync: sync}
 }
 
 func (r *Router) Handle(ctx context.Context, in Incoming) (Outgoing, error) {
@@ -75,13 +80,13 @@ func (r *Router) handleMessage(ctx context.Context, in Incoming) (Outgoing, erro
 	case "password":
 		return r.submitPassword(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/password")))
 	case "folders":
-		return r.showPlaceholder(ctx, in.ChatID, in.UserID, ViewFolders, "Папки Telegram появятся здесь после подключения синхронизации TDLib.")
+		return r.showFolders(ctx, in.ChatID, in.UserID, 0, "")
 	case "chats":
-		return r.showPlaceholder(ctx, in.ChatID, in.UserID, ViewSelectedSources, "Выбранные источники и чаты появятся здесь после синхронизации.")
+		return r.showChats(ctx, in.ChatID, in.UserID, 0, "")
 	case "sync":
-		return r.showPlaceholder(ctx, in.ChatID, in.UserID, ViewFolders, "Ручная синхронизация Telegram будет подключена в PR-005.")
+		return r.syncTelegram(ctx, in.ChatID, in.UserID, 0, "")
 	case "settings":
-		return r.showPlaceholder(ctx, in.ChatID, in.UserID, ViewSettings, "Раздел настроек готов. Подключение аккаунта появится в PR-004.")
+		return r.showSettings(ctx, in.ChatID, in.UserID, 0, "")
 	default:
 		if out, ok, err := r.handleDialogInput(ctx, in); ok || err != nil {
 			return out, err
@@ -99,11 +104,11 @@ func (r *Router) handleCallback(ctx context.Context, in Incoming) (Outgoing, err
 	case ActionNewSummary:
 		out, err = r.showPlaceholder(ctx, in.ChatID, in.UserID, ViewNewSummary, "Создание сводки будет запускаться через фоновые задачи в одном из следующих PR.", in.CallbackMessage, "Раздел сводки открыт.")
 	case ActionFolders:
-		out, err = r.showPlaceholder(ctx, in.ChatID, in.UserID, ViewFolders, "Папки Telegram появятся здесь после подключения синхронизации TDLib.", in.CallbackMessage, "Раздел папок открыт.")
+		out, err = r.showFolders(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Раздел папок открыт.")
 	case ActionGroups:
 		out, err = r.showPlaceholder(ctx, in.ChatID, in.UserID, ViewGroups, "Управление группами источников появится после синхронизации папок и чатов.", in.CallbackMessage, "Раздел групп открыт.")
 	case ActionSelectedSources:
-		out, err = r.showPlaceholder(ctx, in.ChatID, in.UserID, ViewSelectedSources, "Управление выбранными источниками будет подключено к репозиториям в следующем этапе.", in.CallbackMessage, "Раздел источников открыт.")
+		out, err = r.showChats(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Раздел источников открыт.")
 	case ActionHistory:
 		out, err = r.showPlaceholder(ctx, in.ChatID, in.UserID, ViewHistory, "История появится здесь после генерации первых сводок.", in.CallbackMessage, "История открыта.")
 	case ActionArticles:
@@ -311,4 +316,46 @@ func (r *Router) showAuthPrompt(ctx context.Context, chatID, userID int64, statu
 		EditMessageID:  editMessageID,
 		AnswerCallback: callbackAnswer,
 	}, nil
+}
+
+func (r *Router) syncTelegram(ctx context.Context, chatID, userID int64, editMessageID int, callbackAnswer string) (Outgoing, error) {
+	if r.sync == nil {
+		return Outgoing{ChatID: chatID, Text: "Синхронизация Telegram пока не настроена.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	}
+	result, err := r.sync.Sync(ctx, userID)
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: publicAuthError(err), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	}
+	if err := r.states.Set(ctx, userID, DialogState{View: ViewFolders}); err != nil {
+		return Outgoing{}, fmt.Errorf("set dialog state: %w", err)
+	}
+	return Outgoing{ChatID: chatID, Text: syncResultText(result), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+}
+
+func (r *Router) showFolders(ctx context.Context, chatID, userID int64, editMessageID int, callbackAnswer string) (Outgoing, error) {
+	if r.sync == nil {
+		return Outgoing{ChatID: chatID, Text: "Синхронизация Telegram пока не настроена.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	}
+	folders, err := r.sync.ListFolders(ctx, userID)
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: publicAuthError(err), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	}
+	if err := r.states.Set(ctx, userID, DialogState{View: ViewFolders}); err != nil {
+		return Outgoing{}, fmt.Errorf("set dialog state: %w", err)
+	}
+	return Outgoing{ChatID: chatID, Text: foldersText(folders), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+}
+
+func (r *Router) showChats(ctx context.Context, chatID, userID int64, editMessageID int, callbackAnswer string) (Outgoing, error) {
+	if r.sync == nil {
+		return Outgoing{ChatID: chatID, Text: "Синхронизация Telegram пока не настроена.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	}
+	chats, err := r.sync.ListChats(ctx, userID)
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: publicAuthError(err), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	}
+	if err := r.states.Set(ctx, userID, DialogState{View: ViewSelectedSources}); err != nil {
+		return Outgoing{}, fmt.Errorf("set dialog state: %w", err)
+	}
+	return Outgoing{ChatID: chatID, Text: chatsText(chats), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 }

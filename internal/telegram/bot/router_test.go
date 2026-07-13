@@ -65,7 +65,10 @@ func TestRouterRejectsNonOwner(t *testing.T) {
 func TestRouterCallbackRoutesAndStoresState(t *testing.T) {
 	ctx := context.Background()
 	states := NewMemoryStateStore()
-	router := NewRouter(42, states)
+	sync := &fakeSyncController{
+		folders: []domain.TelegramFolder{{Name: "Golang"}},
+	}
+	router := NewRouterWithControllers(42, states, nil, sync)
 
 	out, err := router.Handle(ctx, Incoming{
 		Kind:            IncomingCallback,
@@ -87,6 +90,9 @@ func TestRouterCallbackRoutesAndStoresState(t *testing.T) {
 	if out.AnswerCallback == "" {
 		t.Fatal("AnswerCallback is empty")
 	}
+	if !strings.Contains(out.Text, "Golang") {
+		t.Fatalf("Text = %q, want folder name", out.Text)
+	}
 
 	state, ok, err := states.Get(ctx, 42)
 	if err != nil {
@@ -94,6 +100,46 @@ func TestRouterCallbackRoutesAndStoresState(t *testing.T) {
 	}
 	if !ok || state.View != ViewFolders {
 		t.Fatalf("state = %+v ok=%v, want folders", state, ok)
+	}
+}
+
+func TestRouterSyncAndChats(t *testing.T) {
+	ctx := context.Background()
+	states := NewMemoryStateStore()
+	sync := &fakeSyncController{
+		result: &tdlib.SyncResult{FoldersCount: 1, ChatsCount: 2},
+		chats: []domain.TelegramChat{{
+			Title:       "Backend",
+			Type:        domain.ChatTypeChannel,
+			UnreadCount: 7,
+		}},
+	}
+	router := NewRouterWithControllers(42, states, nil, sync)
+
+	out, err := router.Handle(ctx, Incoming{
+		Kind:   IncomingMessage,
+		UserID: 42,
+		ChatID: 100,
+		Text:   "/sync",
+	})
+	if err != nil {
+		t.Fatalf("Handle(sync) error = %v", err)
+	}
+	if !sync.synced || !strings.Contains(out.Text, "Чатов: 2") {
+		t.Fatalf("sync output = %q synced=%v", out.Text, sync.synced)
+	}
+
+	out, err = router.Handle(ctx, Incoming{
+		Kind:   IncomingMessage,
+		UserID: 42,
+		ChatID: 100,
+		Text:   "/chats",
+	})
+	if err != nil {
+		t.Fatalf("Handle(chats) error = %v", err)
+	}
+	if !strings.Contains(out.Text, "Backend") || !strings.Contains(out.Text, "unread: 7") {
+		t.Fatalf("chats output = %q", out.Text)
 	}
 }
 
@@ -215,4 +261,24 @@ func (f *fakeAuthController) Status(context.Context, int64) (*tdlib.AuthStatus, 
 func (f *fakeAuthController) DeleteSession(context.Context, int64) error {
 	f.deleted = true
 	return nil
+}
+
+type fakeSyncController struct {
+	synced  bool
+	result  *tdlib.SyncResult
+	folders []domain.TelegramFolder
+	chats   []domain.TelegramChat
+}
+
+func (f *fakeSyncController) Sync(context.Context, int64) (*tdlib.SyncResult, error) {
+	f.synced = true
+	return f.result, nil
+}
+
+func (f *fakeSyncController) ListFolders(context.Context, int64) ([]domain.TelegramFolder, error) {
+	return f.folders, nil
+}
+
+func (f *fakeSyncController) ListChats(context.Context, int64) ([]domain.TelegramChat, error) {
+	return f.chats, nil
 }

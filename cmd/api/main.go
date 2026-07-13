@@ -33,14 +33,25 @@ func main() {
 	}
 	defer db.Close()
 
+	factory := tdlib.UnavailableClientFactory{}
+	userRepo := postgres.NewUserRepository(db)
+	sessionRepo := postgres.NewTelegramSessionRepository(db)
 	authService := tdlib.NewAuthService(tdlib.AuthServiceConfig{
 		OwnerTelegramID: cfg.TelegramOwnerID,
 		TelegramAPIID:   cfg.TelegramAPIID,
 		TelegramAPIHash: cfg.TelegramAPIHash,
 		StorageBaseDir:  cfg.TDLibDatabaseDir,
-	}, postgres.NewUserRepository(db), postgres.NewTelegramSessionRepository(db), tdlib.UnavailableClientFactory{})
+	}, userRepo, sessionRepo, factory)
+	syncService := tdlib.NewSyncService(
+		cfg.TelegramOwnerID,
+		userRepo,
+		sessionRepo,
+		postgres.NewTelegramFolderRepository(db),
+		postgres.NewTelegramChatRepository(db),
+		factory,
+	)
 
-	server := httpserver.NewWithAuth(cfg.HTTPAddr, db, logger, authService)
+	server := httpserver.NewWithControllers(cfg.HTTPAddr, db, logger, authService, syncService)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Run()

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/kirilllebedenko/content_scout/internal/domain"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
@@ -18,6 +19,7 @@ type Server struct {
 	db         *sql.DB
 	logger     *slog.Logger
 	auth       AuthController
+	sync       SyncController
 }
 
 type AuthController interface {
@@ -29,15 +31,26 @@ type AuthController interface {
 	DeleteSession(ctx context.Context, telegramUserID int64) error
 }
 
+type SyncController interface {
+	Sync(ctx context.Context, telegramUserID int64) (*tdlib.SyncResult, error)
+	ListFolders(ctx context.Context, telegramUserID int64) ([]domain.TelegramFolder, error)
+	ListChats(ctx context.Context, telegramUserID int64) ([]domain.TelegramChat, error)
+}
+
 func New(addr string, db *sql.DB, logger *slog.Logger) *Server {
 	return NewWithAuth(addr, db, logger, nil)
 }
 
 func NewWithAuth(addr string, db *sql.DB, logger *slog.Logger, auth AuthController) *Server {
+	return NewWithControllers(addr, db, logger, auth, nil)
+}
+
+func NewWithControllers(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController) *Server {
 	server := &Server{
 		db:     db,
 		logger: logger,
 		auth:   auth,
+		sync:   sync,
 	}
 
 	mux := http.NewServeMux()
@@ -49,6 +62,9 @@ func NewWithAuth(addr string, db *sql.DB, logger *slog.Logger, auth AuthControll
 	mux.HandleFunc("POST /telegram/auth/code", server.authCode)
 	mux.HandleFunc("POST /telegram/auth/password", server.authPassword)
 	mux.HandleFunc("DELETE /telegram/session", server.authDeleteSession)
+	mux.HandleFunc("POST /telegram/sync", server.telegramSync)
+	mux.HandleFunc("GET /telegram/folders", server.telegramFolders)
+	mux.HandleFunc("GET /telegram/chats", server.telegramChats)
 
 	server.httpServer = &http.Server{
 		Addr:              addr,
