@@ -4,7 +4,7 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-015 Native TDLib Adapter`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, native TDLib JSON adapter, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, LLM summary generation, summary history browsing, article draft conversion, Markdown export for Obsidian, scheduled summary runs, and optional Obsidian Local REST API note writes.
+This repository is currently at `PR-017 Local Logging and 24-hour Retention`: project structure, configuration, HTTP health checks, service-token protected internal API, PostgreSQL connection, migrations, Docker Compose, local structured logs with 24-hour retention, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, native TDLib JSON adapter, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, LLM summary generation, summary history browsing, article draft conversion, Markdown export for Obsidian, scheduled summary runs, and optional Obsidian Local REST API note writes.
 
 ## Architecture
 
@@ -47,63 +47,99 @@ For local non-Docker runs, set `DATABASE_URL` to a host database, for example:
 export DATABASE_URL='postgres://postgres:postgres@localhost:5432/telegram_summary?sslmode=disable'
 ```
 
+Set `SERVICE_TOKEN` for the internal API. Every endpoint except `GET /health` and `GET /ready` requires:
+
+```http
+Authorization: Bearer <token>
+```
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---:|---|---|
+| `APP_ENV` | no | `development` | Application environment label used by services and logs. |
+| `HTTP_ADDR` | no | `:8080` | API listen address. |
+| `DATABASE_URL` | yes | local PostgreSQL URL in code, Docker URL in `.env.example` | PostgreSQL connection string. |
+| `SERVICE_TOKEN` | yes for `cmd/api` | empty | Bearer token for all internal API endpoints except `/health` and `/ready`. |
+| `LOG_FORMAT` | no | `json` | Log format: `json` for Docker/production-like runs or `text` for local development. |
+| `LOG_LEVEL` | no | `info` | Minimum log level: `debug`, `info`, `warn`, or `error`. |
+| `LOG_DIR` | no | `./data/logs` locally, `/data/logs` in Docker | Directory for local rotated log files. Empty disables file logging. |
+| `LOG_RETENTION` | no | `24h` | Deletes log files older than this duration. |
+| `LOG_ROTATION_INTERVAL` | no | `1h` | File rotation and cleanup tick interval. |
+| `TELEGRAM_BOT_TOKEN` | yes for `cmd/bot` | empty | Telegram Bot API token. If empty, the bot exits idle. |
+| `TELEGRAM_OWNER_ID` | yes for bot/API actions | `0` | Telegram user id allowed to control the bot and API flows. |
+| `TELEGRAM_API_ID` | yes for native TDLib | `0` | Telegram API id from my.telegram.org. |
+| `TELEGRAM_API_HASH` | yes for native TDLib | empty | Telegram API hash from my.telegram.org. |
+| `TDLIB_DATABASE_DIR` | no | `./data/tdlib` locally, `/data/tdlib` in Docker | TDLib session/database directory. Persist this directory. |
+| `TDLIB_GIT_REF` | no | `master` | TDLib source branch/tag/commit used by Docker builds. |
+| `TDLIB_INTEGRATION_SESSION_DIR` | no | temp dir | Session directory for optional native TDLib integration tests. |
+| `LLM_PROVIDER` | no | `openai` | LLM provider label. The current adapter is OpenAI-compatible. |
+| `LLM_BASE_URL` | depends on provider | empty | OpenAI-compatible chat completions base URL. |
+| `LLM_API_KEY` | yes for summary/article generation | empty | LLM API key. Do not log it. |
+| `LLM_MODEL` | yes for summary/article generation | empty | Model name for summary and article generation. |
+| `ENCRYPTION_KEY` | reserved | empty | Reserved for future encrypted secret storage. |
+| `EXPORT_DIR` | no | `./data/exports` locally, `/data/exports` in Docker | Directory for Markdown exports. |
+| `OBSIDIAN_REST_URL` | no | empty | Obsidian Local REST API base URL. |
+| `OBSIDIAN_API_KEY` | no | empty | Obsidian Local REST API key. Enables REST export when set. |
+| `OBSIDIAN_INSECURE_SKIP_VERIFY` | no | `false` | Allow self-signed Obsidian HTTPS certificate. |
+
 ## Commands
 
-```sh
-make build
-make build-tdlib
-make test
-make test-tdlib-nocgo
-make test-tdlib-integration
-make lint
-make migrate-up
-make migrate-down
-make run-api
-make run-bot
-make run-tdlib
-make run-worker
-make docker-up
-make docker-down
-```
+| Command | Description |
+|---|---|
+| `make build` | Build all Go command binaries with the default non-TDLib local configuration. |
+| `make build-tdlib` | Build `api`, `bot`, and `tdlib-worker` with `-tags tdlib` and CGO enabled. Requires local `libtdjson`. |
+| `make test` | Run the full default Go test suite. |
+| `make test-tdlib-nocgo` | Run TDLib package tests with the `tdlib` tag but CGO disabled, verifying the fallback path. |
+| `make test-tdlib-integration` | Run optional native TDLib integration tests. Requires `libtdjson`, Telegram API credentials, and a session directory. |
+| `make lint` | Run `go vet ./...`. |
+| `make migrate-up` | Apply SQL migrations from `migrations`. |
+| `make migrate-down` | Roll back SQL migrations from `migrations`. |
+| `make run-api` | Run the internal HTTP API locally. |
+| `make run-bot` | Run the Telegram bot locally. |
+| `make run-tdlib` | Run the TDLib worker entrypoint locally. |
+| `make run-worker` | Run the summary worker locally. |
+| `make docker-up` | Create `.env` if missing and start Docker Compose with rebuilds. |
+| `make docker-down` | Stop and remove Docker Compose containers. |
 
 The bot exits idle when `TELEGRAM_BOT_TOKEN` or `TELEGRAM_OWNER_ID` is not configured. With both values set, it starts Telegram long polling and only responds to the configured owner.
 
 Bot commands currently available:
 
-```text
-/start
-/connect
-/phone <number>
-/code <code>
-/password <2fa password>
-/session
-/delete_session
-/folders
-/chats
-/sync
-/groups
-/group_create <name>
-/group_rename <id> <name>
-/group_delete <id>
-/group_chats <id>
-/group_add_chat <group_id> <chat_id> [priority]
-/group_remove_chat <group_id> <chat_id>
-/collect_group <group_id> [new|24h|3d|week|latest_n] [limit]
-/summarize_collection <collection_job_id> [short|standard|detailed]
-/summaries
-/summary <summary_id>
-/summary_topics <summary_id>
-/topic <summary_id> <position>
-/article_from_summary <summary_id> [analysis|guide|educational|outline|telegram_post]
-/article_from_topic <summary_id> <position> [analysis|guide|educational|outline|telegram_post]
-/articles
-/article <article_id>
-/article_title <article_id> <new title>
-/article_tags <article_id> tag1,tag2
-/export_article <article_id>
-/export_summary <summary_id>
-/settings
-```
+| Command | Description |
+|---|---|
+| `/start` | Open the main bot menu. |
+| `/connect` | Start or resume TDLib account authorization. |
+| `/phone <number>` | Submit the phone number requested by TDLib. |
+| `/code <code>` | Submit the Telegram login confirmation code. |
+| `/password <2fa password>` | Submit the 2FA password when the account requires it. |
+| `/session` | Show current TDLib session and authorization state. |
+| `/delete_session` | Log out and delete the stored TDLib session. |
+| `/folders` | Show cached Telegram folders. |
+| `/chats` | Show cached Telegram chats. |
+| `/sync` | Sync folders and chats from Telegram through TDLib. |
+| `/groups` | List configured source groups. |
+| `/group_create <name>` | Create a source group. |
+| `/group_rename <id> <name>` | Rename an existing source group. |
+| `/group_delete <id>` | Delete a source group. |
+| `/group_chats <id>` | List chats attached to a source group. |
+| `/group_add_chat <group_id> <chat_id> [priority]` | Add a Telegram chat to a source group. |
+| `/group_remove_chat <group_id> <chat_id>` | Remove a chat from a source group. |
+| `/collect_group <group_id> [new\|24h\|3d\|week\|latest_n] [limit]` | Collect messages from all enabled chats in a group. |
+| `/summarize_collection <collection_job_id> [short\|standard\|detailed]` | Generate a summary from a collection job. |
+| `/summaries` | Show recent summaries. |
+| `/summary <summary_id>` | Show one summary in full. |
+| `/summary_topics <summary_id>` | Show topics extracted from a summary. |
+| `/topic <summary_id> <position>` | Show a specific summary topic. |
+| `/article_from_summary <summary_id> [analysis\|guide\|educational\|outline\|telegram_post]` | Convert a full summary into an article draft. |
+| `/article_from_topic <summary_id> <position> [analysis\|guide\|educational\|outline\|telegram_post]` | Convert one summary topic into an article draft. |
+| `/articles` | Show recent article drafts. |
+| `/article <article_id>` | Show one article draft. |
+| `/article_title <article_id> <new title>` | Update an article title. |
+| `/article_tags <article_id> tag1,tag2` | Replace article tags. |
+| `/export_article <article_id>` | Export an article draft to Markdown and optional Obsidian REST. |
+| `/export_summary <summary_id>` | Export a summary to Markdown and optional Obsidian REST. |
+| `/settings` | Open settings and account/session controls. |
 
 Authorization inputs are routed through the TDLib state machine. Phone numbers, confirmation codes, and 2FA passwords are not logged or stored by the application.
 
@@ -236,6 +272,28 @@ If `OBSIDIAN_API_KEY` is set, exports are also written directly to Obsidian thro
 
 Scheduled summaries are stored in `summary_schedules` and executed by `cmd/summary-worker`. The MVP supports daily schedule strings in `HH:MM`, `daily@HH:MM`, or `@daily` format, IANA timezones, quiet-hour windows, summary format, and optional export to Obsidian. Each attempt is recorded in `schedule_runs`.
 
+## Local Logs
+
+Services use `log/slog` and write to stdout plus hourly files under `LOG_DIR`.
+
+```text
+data/logs/
+├── api-2026-07-13-18.log
+├── api-current.log
+├── bot-2026-07-13-18.log
+├── summary-worker-2026-07-13-18.log
+└── tdlib-worker-2026-07-13-18.log
+```
+
+Files older than `LOG_RETENTION` are removed by a lightweight cleanup loop in each process. Sensitive values such as authorization codes, 2FA passwords, API keys, service tokens, and full private message text should not be logged.
+
+Examples:
+
+```sh
+tail -f data/logs/summary-worker-current.log
+grep '"level":"ERROR"' data/logs/*.log
+```
+
 ## Docker
 
 ```sh
@@ -285,9 +343,10 @@ go test ./internal/storage/postgres
 
 - `.env` is ignored by git.
 - Sensitive Telegram and LLM fields are config-only at this stage.
+- Internal API endpoints require `SERVICE_TOKEN` except `/health` and `/ready`.
 - Logs avoid message content and secrets.
 - Docker services run as a non-root user where application containers are used.
 
 ## Next PR
 
-The planned PR sequence from the initial roadmap is complete through `PR-015`. The next step is `PR-016 Secure Internal API`: service-token middleware, security headers, request body limits, and HTTP server timeouts.
+The planned PR sequence from the initial roadmap is complete through `PR-017`. The next step is `PR-018 Reliable Job Queue`.

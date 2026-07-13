@@ -32,7 +32,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app \
     && useradd --system --gid app --home-dir /nonexistent --shell /usr/sbin/nologin app \
-    && mkdir -p /data/tdlib /data/exports \
+    && mkdir -p /data/tdlib /data/exports /data/logs \
     && chown -R app:app /data
 COPY --from=tdlib /usr/local/lib /usr/local/lib
 RUN ldconfig

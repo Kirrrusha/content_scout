@@ -4,7 +4,7 @@
 
 Персональный сервис для сводок из Telegram с экспортом Markdown-файлов в Obsidian.
 
-Текущее состояние репозитория: `PR-015 Native TDLib Adapter`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, native TDLib JSON adapter, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей, генерация summary через LLM, просмотр истории summary, конвертация summary/topics в черновики статей, Markdown export для Obsidian, scheduled summary runs и optional Obsidian Local REST API note writes.
+Текущее состояние репозитория: `PR-017 Local Logging and 24-hour Retention`. Уже есть структура проекта, конфигурация, HTTP health checks, protected internal API через service token, подключение PostgreSQL, миграции, Docker Compose, локальные structured logs с 24-hour retention, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, native TDLib JSON adapter, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей, генерация summary через LLM, просмотр истории summary, конвертация summary/topics в черновики статей, Markdown export для Obsidian, scheduled summary runs и optional Obsidian Local REST API note writes.
 
 ## Архитектура
 
@@ -47,63 +47,99 @@ cp .env.example .env
 export DATABASE_URL='postgres://postgres:postgres@localhost:5432/telegram_summary?sslmode=disable'
 ```
 
+Задайте `SERVICE_TOKEN` для внутреннего API. Все endpoints, кроме `GET /health` и `GET /ready`, требуют:
+
+```http
+Authorization: Bearer <token>
+```
+
+### Переменные Окружения
+
+| Переменная | Обязательна | Default | Описание |
+|---|---:|---|---|
+| `APP_ENV` | нет | `development` | Метка окружения для сервисов и логов. |
+| `HTTP_ADDR` | нет | `:8080` | Адрес, на котором слушает API. |
+| `DATABASE_URL` | да | local PostgreSQL URL в коде, Docker URL в `.env.example` | Строка подключения к PostgreSQL. |
+| `SERVICE_TOKEN` | да для `cmd/api` | empty | Bearer token для всех внутренних API endpoints, кроме `/health` и `/ready`. |
+| `LOG_FORMAT` | нет | `json` | Формат логов: `json` для Docker/production-like запусков или `text` для локальной разработки. |
+| `LOG_LEVEL` | нет | `info` | Минимальный уровень логов: `debug`, `info`, `warn` или `error`. |
+| `LOG_DIR` | нет | `./data/logs` локально, `/data/logs` в Docker | Директория для локальных rotated log files. Пустое значение отключает file logging. |
+| `LOG_RETENTION` | нет | `24h` | Удалять log files старше этого duration. |
+| `LOG_ROTATION_INTERVAL` | нет | `1h` | Интервал ротации файлов и cleanup loop. |
+| `TELEGRAM_BOT_TOKEN` | да для `cmd/bot` | empty | Telegram Bot API token. Если пустой, бот выходит в idle-режиме. |
+| `TELEGRAM_OWNER_ID` | да для действий bot/API | `0` | Telegram user id, которому разрешено управлять ботом и API flow. |
+| `TELEGRAM_API_ID` | да для native TDLib | `0` | Telegram API id из my.telegram.org. |
+| `TELEGRAM_API_HASH` | да для native TDLib | empty | Telegram API hash из my.telegram.org. |
+| `TDLIB_DATABASE_DIR` | нет | `./data/tdlib` локально, `/data/tdlib` в Docker | Директория TDLib session/database. Её нужно сохранять между перезапусками. |
+| `TDLIB_GIT_REF` | нет | `master` | Branch/tag/commit исходников TDLib для Docker-сборок. |
+| `TDLIB_INTEGRATION_SESSION_DIR` | нет | temp dir | Директория сессии для опциональных native TDLib integration tests. |
+| `LLM_PROVIDER` | нет | `openai` | Метка LLM provider. Текущий adapter OpenAI-compatible. |
+| `LLM_BASE_URL` | зависит от provider | empty | Base URL OpenAI-compatible chat completions API. |
+| `LLM_API_KEY` | да для summary/article generation | empty | LLM API key. Не логировать. |
+| `LLM_MODEL` | да для summary/article generation | empty | Имя модели для генерации summary и статей. |
+| `ENCRYPTION_KEY` | reserved | empty | Зарезервировано для будущего encrypted secret storage. |
+| `EXPORT_DIR` | нет | `./data/exports` локально, `/data/exports` в Docker | Директория для Markdown exports. |
+| `OBSIDIAN_REST_URL` | нет | empty | Base URL Obsidian Local REST API. |
+| `OBSIDIAN_API_KEY` | нет | empty | API key для Obsidian Local REST API. Если задан, включает REST export. |
+| `OBSIDIAN_INSECURE_SKIP_VERIFY` | нет | `false` | Разрешить self-signed HTTPS certificate Obsidian plugin. |
+
 ## Команды
 
-```sh
-make build
-make build-tdlib
-make test
-make test-tdlib-nocgo
-make test-tdlib-integration
-make lint
-make migrate-up
-make migrate-down
-make run-api
-make run-bot
-make run-tdlib
-make run-worker
-make docker-up
-make docker-down
-```
+| Команда | Описание |
+|---|---|
+| `make build` | Собрать все Go command binaries в обычном локальном режиме без native TDLib. |
+| `make build-tdlib` | Собрать `api`, `bot` и `tdlib-worker` с `-tags tdlib` и включённым CGO. Требует локальный `libtdjson`. |
+| `make test` | Запустить весь стандартный Go test suite. |
+| `make test-tdlib-nocgo` | Запустить тесты TDLib package с tag `tdlib`, но без CGO, проверяя fallback path. |
+| `make test-tdlib-integration` | Запустить опциональные native TDLib integration tests. Требует `libtdjson`, Telegram API credentials и директорию сессии. |
+| `make lint` | Запустить `go vet ./...`. |
+| `make migrate-up` | Применить SQL migrations из `migrations`. |
+| `make migrate-down` | Откатить SQL migrations из `migrations`. |
+| `make run-api` | Запустить внутренний HTTP API локально. |
+| `make run-bot` | Запустить Telegram-бота локально. |
+| `make run-tdlib` | Запустить TDLib worker entrypoint локально. |
+| `make run-worker` | Запустить summary worker локально. |
+| `make docker-up` | Создать `.env`, если его нет, и запустить Docker Compose с rebuild. |
+| `make docker-down` | Остановить и удалить контейнеры Docker Compose. |
 
 Бот уходит в idle-режим, если не заданы `TELEGRAM_BOT_TOKEN` или `TELEGRAM_OWNER_ID`. Если оба значения заданы, бот запускает Telegram long polling и отвечает только настроенному владельцу.
 
 Текущие команды бота:
 
-```text
-/start
-/connect
-/phone <number>
-/code <code>
-/password <2fa password>
-/session
-/delete_session
-/folders
-/chats
-/sync
-/groups
-/group_create <name>
-/group_rename <id> <name>
-/group_delete <id>
-/group_chats <id>
-/group_add_chat <group_id> <chat_id> [priority]
-/group_remove_chat <group_id> <chat_id>
-/collect_group <group_id> [new|24h|3d|week|latest_n] [limit]
-/summarize_collection <collection_job_id> [short|standard|detailed]
-/summaries
-/summary <summary_id>
-/summary_topics <summary_id>
-/topic <summary_id> <position>
-/article_from_summary <summary_id> [analysis|guide|educational|outline|telegram_post]
-/article_from_topic <summary_id> <position> [analysis|guide|educational|outline|telegram_post]
-/articles
-/article <article_id>
-/article_title <article_id> <новое название>
-/article_tags <article_id> tag1,tag2
-/export_article <article_id>
-/export_summary <summary_id>
-/settings
-```
+| Команда | Описание |
+|---|---|
+| `/start` | Открыть главное меню бота. |
+| `/connect` | Начать или продолжить авторизацию Telegram-аккаунта через TDLib. |
+| `/phone <number>` | Передать номер телефона, который запросил TDLib. |
+| `/code <code>` | Передать код подтверждения входа в Telegram. |
+| `/password <2fa password>` | Передать пароль 2FA, если он нужен аккаунту. |
+| `/session` | Показать текущую TDLib-сессию и состояние авторизации. |
+| `/delete_session` | Выйти из аккаунта и удалить сохранённую TDLib-сессию. |
+| `/folders` | Показать сохранённый кэш Telegram-папок. |
+| `/chats` | Показать сохранённый кэш Telegram-чатов. |
+| `/sync` | Синхронизировать папки и чаты из Telegram через TDLib. |
+| `/groups` | Показать настроенные группы источников. |
+| `/group_create <name>` | Создать группу источников. |
+| `/group_rename <id> <name>` | Переименовать группу источников. |
+| `/group_delete <id>` | Удалить группу источников. |
+| `/group_chats <id>` | Показать чаты, привязанные к группе источников. |
+| `/group_add_chat <group_id> <chat_id> [priority]` | Добавить Telegram-чат в группу источников. |
+| `/group_remove_chat <group_id> <chat_id>` | Удалить чат из группы источников. |
+| `/collect_group <group_id> [new\|24h\|3d\|week\|latest_n] [limit]` | Собрать сообщения из всех включённых чатов группы. |
+| `/summarize_collection <collection_job_id> [short\|standard\|detailed]` | Сгенерировать summary из collection job. |
+| `/summaries` | Показать последние summary. |
+| `/summary <summary_id>` | Показать одно summary целиком. |
+| `/summary_topics <summary_id>` | Показать темы, извлечённые из summary. |
+| `/topic <summary_id> <position>` | Показать конкретную тему summary. |
+| `/article_from_summary <summary_id> [analysis\|guide\|educational\|outline\|telegram_post]` | Превратить всё summary в черновик статьи. |
+| `/article_from_topic <summary_id> <position> [analysis\|guide\|educational\|outline\|telegram_post]` | Превратить одну тему summary в черновик статьи. |
+| `/articles` | Показать последние черновики статей. |
+| `/article <article_id>` | Показать один черновик статьи. |
+| `/article_title <article_id> <новое название>` | Обновить название статьи. |
+| `/article_tags <article_id> tag1,tag2` | Заменить теги статьи. |
+| `/export_article <article_id>` | Экспортировать статью в Markdown и опционально в Obsidian REST. |
+| `/export_summary <summary_id>` | Экспортировать summary в Markdown и опционально в Obsidian REST. |
+| `/settings` | Открыть настройки и управление аккаунтом/сессией. |
 
 Данные авторизации проходят через TDLib state machine. Номера телефонов, коды подтверждения и 2FA-пароли не логируются и не сохраняются приложением.
 
@@ -236,6 +272,28 @@ Markdown exports сохраняются в `EXPORT_DIR`, содержат YAML f
 
 Scheduled summaries хранятся в `summary_schedules` и выполняются через `cmd/summary-worker`. MVP поддерживает daily schedule strings в формате `HH:MM`, `daily@HH:MM` или `@daily`, IANA timezones, quiet-hour windows, summary format и optional export to Obsidian. Каждая попытка записывается в `schedule_runs`.
 
+## Локальные Логи
+
+Сервисы используют `log/slog` и пишут одновременно в stdout и hourly files внутри `LOG_DIR`.
+
+```text
+data/logs/
+├── api-2026-07-13-18.log
+├── api-current.log
+├── bot-2026-07-13-18.log
+├── summary-worker-2026-07-13-18.log
+└── tdlib-worker-2026-07-13-18.log
+```
+
+Файлы старше `LOG_RETENTION` удаляются лёгким cleanup loop внутри каждого процесса. В логи не должны попадать authorization codes, 2FA passwords, API keys, service tokens и полный текст приватных сообщений.
+
+Примеры:
+
+```sh
+tail -f data/logs/summary-worker-current.log
+grep '"level":"ERROR"' data/logs/*.log
+```
+
 ## Docker
 
 ```sh
@@ -285,9 +343,10 @@ go test ./internal/storage/postgres
 
 - `.env` игнорируется git'ом.
 - Sensitive Telegram и LLM поля пока используются только как конфигурация.
+- Внутренние API endpoints требуют `SERVICE_TOKEN`, кроме `/health` и `/ready`.
 - Логи не должны содержать тексты сообщений и secrets.
 - Docker application containers запускаются от non-root пользователя.
 
 ## Следующий PR
 
-Плановая цепочка из исходного roadmap выполнена до `PR-015`. Следующий этап — `PR-016 Secure Internal API`: service-token middleware, security headers, request body limits и HTTP server timeouts.
+Плановая цепочка из исходного roadmap выполнена до `PR-017`. Следующий этап — `PR-018 Reliable Job Queue`.

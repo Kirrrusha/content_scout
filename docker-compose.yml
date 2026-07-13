@@ -20,11 +20,19 @@ services:
       context: .
       dockerfile: deployments/docker/migrate.Dockerfile
     env_file: .env
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_DIR: ${LOG_DIR:-/data/logs}
+      LOG_RETENTION: ${LOG_RETENTION:-24h}
+      LOG_ROTATION_INTERVAL: ${LOG_ROTATION_INTERVAL:-1h}
     depends_on:
       postgres:
         condition: service_healthy
     command: ["-direction", "up", "-dir", "migrations"]
     restart: "no"
+    volumes:
+      - ./data/logs:/data/logs
 
   api:
     build:
@@ -33,6 +41,12 @@ services:
       args:
         TDLIB_GIT_REF: ${TDLIB_GIT_REF:-master}
     env_file: .env
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_DIR: ${LOG_DIR:-/data/logs}
+      LOG_RETENTION: ${LOG_RETENTION:-24h}
+      LOG_ROTATION_INTERVAL: ${LOG_ROTATION_INTERVAL:-1h}
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,6 +57,7 @@ services:
     volumes:
       - tdlib_data:/data/tdlib
       - exports:/data/exports
+      - ./data/logs:/data/logs
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
       interval: 10s
@@ -56,10 +71,17 @@ services:
       args:
         TDLIB_GIT_REF: ${TDLIB_GIT_REF:-master}
     env_file: .env
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_DIR: ${LOG_DIR:-/data/logs}
+      LOG_RETENTION: ${LOG_RETENTION:-24h}
+      LOG_ROTATION_INTERVAL: ${LOG_ROTATION_INTERVAL:-1h}
     profiles: ["bot"]
     volumes:
       - tdlib_data:/data/tdlib
       - exports:/data/exports
+      - ./data/logs:/data/logs
 
   tdlib-worker:
     build:
@@ -68,18 +90,32 @@ services:
       args:
         TDLIB_GIT_REF: ${TDLIB_GIT_REF:-master}
     env_file: .env
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_DIR: ${LOG_DIR:-/data/logs}
+      LOG_RETENTION: ${LOG_RETENTION:-24h}
+      LOG_ROTATION_INTERVAL: ${LOG_ROTATION_INTERVAL:-1h}
     profiles: ["tdlib"]
     volumes:
       - tdlib_data:/data/tdlib
+      - ./data/logs:/data/logs
 
   summary-worker:
     build:
       context: .
       dockerfile: deployments/docker/summary-worker.Dockerfile
     env_file: .env
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_DIR: ${LOG_DIR:-/data/logs}
+      LOG_RETENTION: ${LOG_RETENTION:-24h}
+      LOG_ROTATION_INTERVAL: ${LOG_ROTATION_INTERVAL:-1h}
     profiles: ["worker"]
     volumes:
       - exports:/data/exports
+      - ./data/logs:/data/logs
 
 volumes:
   postgres_data:

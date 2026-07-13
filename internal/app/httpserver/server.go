@@ -2,12 +2,14 @@ package httpserver
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/article"
@@ -23,6 +25,7 @@ type Server struct {
 	httpServer *http.Server
 	db         *sql.DB
 	logger     *slog.Logger
+	options    Options
 	auth       AuthController
 	sync       SyncController
 	groups     GroupController
@@ -31,6 +34,28 @@ type Server struct {
 	browser    SummaryBrowser
 	articles   ArticleController
 	exports    ExportController
+}
+
+type Options struct {
+	ServiceToken      string
+	RequireAuth       bool
+	MaxRequestBytes   int64
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+}
+
+const defaultMaxRequestBytes int64 = 1 << 20
+
+func DefaultOptions() Options {
+	return Options{
+		MaxRequestBytes:   defaultMaxRequestBytes,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 }
 
 type AuthController interface {
@@ -118,9 +143,15 @@ func NewWithArticle(addr string, db *sql.DB, logger *slog.Logger, auth AuthContr
 }
 
 func NewWithExports(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summaryService SummaryController, browser SummaryBrowser, articles ArticleController, exports ExportController) *Server {
+	return NewWithOptions(addr, db, logger, DefaultOptions(), auth, sync, groups, collector, summaryService, browser, articles, exports)
+}
+
+func NewWithOptions(addr string, db *sql.DB, logger *slog.Logger, options Options, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summaryService SummaryController, browser SummaryBrowser, articles ArticleController, exports ExportController) *Server {
+	options = normalizeOptions(options)
 	server := &Server{
 		db:        db,
 		logger:    logger,
+		options:   options,
 		auth:      auth,
 		sync:      sync,
 		groups:    groups,
@@ -163,10 +194,14 @@ func NewWithExports(addr string, db *sql.DB, logger *slog.Logger, auth AuthContr
 	mux.HandleFunc("POST /exports/articles/{id}", server.exportArticle)
 	mux.HandleFunc("POST /exports/summaries/{id}", server.exportSummary)
 
+	handler := server.securityHeaders(server.authenticate(mux))
 	server.httpServer = &http.Server{
 		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
+		Handler:           handler,
+		ReadHeaderTimeout: options.ReadHeaderTimeout,
+		ReadTimeout:       options.ReadTimeout,
+		WriteTimeout:      options.WriteTimeout,
+		IdleTimeout:       options.IdleTimeout,
 	}
 	return server
 }
@@ -200,6 +235,76 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+func normalizeOptions(options Options) Options {
+	defaults := DefaultOptions()
+	if options.MaxRequestBytes <= 0 {
+		options.MaxRequestBytes = defaults.MaxRequestBytes
+	}
+	if options.ReadHeaderTimeout <= 0 {
+		options.ReadHeaderTimeout = defaults.ReadHeaderTimeout
+	}
+	if options.ReadTimeout <= 0 {
+		options.ReadTimeout = defaults.ReadTimeout
+	}
+	if options.WriteTimeout <= 0 {
+		options.WriteTimeout = defaults.WriteTimeout
+	}
+	if options.IdleTimeout <= 0 {
+		options.IdleTimeout = defaults.IdleTimeout
+	}
+	return options
+}
+
+func (s *Server) authenticate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, s.options.MaxRequestBytes)
+		if isPublicEndpoint(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !s.options.RequireAuth {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if s.options.ServiceToken == "" {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "service token is not configured"})
+			return
+		}
+		if !validBearerToken(r.Header.Get("Authorization"), s.options.ServiceToken) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := w.Header()
+		header.Set("X-Content-Type-Options", "nosniff")
+		header.Set("X-Frame-Options", "DENY")
+		header.Set("Referrer-Policy", "no-referrer")
+		header.Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isPublicEndpoint(r *http.Request) bool {
+	return r.Method == http.MethodGet && (r.URL.Path == "/health" || r.URL.Path == "/ready")
+}
+
+func validBearerToken(header, expected string) bool {
+	const prefix = "Bearer "
+	if !strings.HasPrefix(header, prefix) {
+		return false
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(header, prefix))
+	if token == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

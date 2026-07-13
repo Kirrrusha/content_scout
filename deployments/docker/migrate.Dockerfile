@@ -6,7 +6,9 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/migrate ./cmd/migrate
 
 FROM alpine:3.22
-RUN addgroup -S app && adduser -S app -G app
+RUN addgroup -S app && adduser -S app -G app \
+    && mkdir -p /data/logs \
+    && chown -R app:app /data
 USER app
 WORKDIR /app
 COPY --from=build /out/migrate /usr/local/bin/migrate

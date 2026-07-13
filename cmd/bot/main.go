@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,6 +11,7 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/article"
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/config"
+	"github.com/kirilllebedenko/content_scout/internal/logging"
 	"github.com/kirilllebedenko/content_scout/internal/obsidian"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/storage/postgres"
@@ -22,13 +22,27 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := logging.Bootstrap("bot")
 
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Error("load config failed", "error", err)
 		os.Exit(1)
 	}
+	logRuntime, err := logging.New(logging.Config{
+		Service:          "bot",
+		Format:           cfg.LogFormat,
+		Level:            cfg.LogLevel,
+		Dir:              cfg.LogDir,
+		Retention:        cfg.LogRetention,
+		RotationInterval: cfg.LogRotation,
+	})
+	if err != nil {
+		logger.Error("configure logging failed", "error", err)
+		os.Exit(1)
+	}
+	defer logRuntime.Close()
+	logger = logRuntime.Logger
 	if cfg.TelegramBotToken == "" {
 		logger.Warn("telegram bot token is not configured; bot shell is idle")
 		return

@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"flag"
-	"log/slog"
 	"os"
 
 	"github.com/kirilllebedenko/content_scout/internal/config"
+	"github.com/kirilllebedenko/content_scout/internal/logging"
 	"github.com/kirilllebedenko/content_scout/internal/storage/postgres"
 )
 
@@ -17,12 +17,26 @@ func main() {
 	flag.StringVar(&dir, "dir", "migrations", "migrations directory")
 	flag.Parse()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := logging.Bootstrap("migrate")
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Error("load config failed", "error", err)
 		os.Exit(1)
 	}
+	logRuntime, err := logging.New(logging.Config{
+		Service:          "migrate",
+		Format:           cfg.LogFormat,
+		Level:            cfg.LogLevel,
+		Dir:              cfg.LogDir,
+		Retention:        cfg.LogRetention,
+		RotationInterval: cfg.LogRotation,
+	})
+	if err != nil {
+		logger.Error("configure logging failed", "error", err)
+		os.Exit(1)
+	}
+	defer logRuntime.Close()
+	logger = logRuntime.Logger
 
 	ctx := context.Background()
 	db, err := postgres.Open(ctx, cfg.DatabaseURL)

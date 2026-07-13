@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -37,6 +38,46 @@ func TestLoadParsesNumbers(t *testing.T) {
 	}
 	if cfg.TelegramAPIID != 42 {
 		t.Fatalf("TelegramAPIID = %d, want 42", cfg.TelegramAPIID)
+	}
+}
+
+func TestLoadReadsServiceToken(t *testing.T) {
+	t.Setenv("SERVICE_TOKEN", "secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ServiceToken != "secret" {
+		t.Fatalf("ServiceToken = %q, want secret", cfg.ServiceToken)
+	}
+}
+
+func TestLoadParsesLoggingConfig(t *testing.T) {
+	t.Setenv("LOG_FORMAT", "text")
+	t.Setenv("LOG_LEVEL", "debug")
+	t.Setenv("LOG_DIR", "/tmp/content-scout-logs")
+	t.Setenv("LOG_RETENTION", "12h")
+	t.Setenv("LOG_ROTATION_INTERVAL", "30m")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.LogFormat != "text" || cfg.LogLevel != "debug" || cfg.LogDir != "/tmp/content-scout-logs" {
+		t.Fatalf("logging config = %+v", cfg)
+	}
+	if cfg.LogRetention != 12*time.Hour || cfg.LogRotation != 30*time.Minute {
+		t.Fatalf("durations retention=%s rotation=%s", cfg.LogRetention, cfg.LogRotation)
+	}
+}
+
+func TestLoadRejectsInvalidLoggingDuration(t *testing.T) {
+	t.Setenv("LOG_RETENTION", "not-a-duration")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want error")
 	}
 }
 
