@@ -109,6 +109,7 @@ func (f *fakeSummaries) CreateJob(_ context.Context, job domain.SummaryJob) (*do
 	job.ID = 50
 	return &job, nil
 }
+func (f *fakeSummaries) FindJob(context.Context, int64) (*domain.SummaryJob, error) { return nil, nil }
 func (f *fakeSummaries) UpdateJobStatus(_ context.Context, _ int64, status domain.JobStatus, _ *string) error {
 	f.status = status
 	return nil

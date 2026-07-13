@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kirilllebedenko/content_scout/internal/article"
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/config"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
@@ -89,8 +90,17 @@ func main() {
 		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: 60 * time.Second}),
 	)
 	summaryBrowser := summary.NewBrowser(cfg.TelegramOwnerID, userRepo, summaryRepo)
+	articleService := article.NewService(
+		cfg.TelegramOwnerID,
+		userRepo,
+		summaryRepo,
+		postgres.NewMessageCollectionRepository(db),
+		postgres.NewTelegramChatRepository(db),
+		postgres.NewArticleRepository(db),
+		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: 60 * time.Second}),
+	)
 
-	service, err := tgbot.NewServiceWithBrowser(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, syncService, groupService, collectionService, summaryService, summaryBrowser, logger)
+	service, err := tgbot.NewServiceWithArticle(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, syncService, groupService, collectionService, summaryService, summaryBrowser, articleService, logger)
 	if err != nil {
 		logger.Error("create bot service failed", "error", err)
 		os.Exit(1)

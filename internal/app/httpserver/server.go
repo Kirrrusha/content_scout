@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/kirilllebedenko/content_scout/internal/article"
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/domain"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
@@ -27,6 +28,7 @@ type Server struct {
 	collector  CollectionController
 	summary    SummaryController
 	browser    SummaryBrowser
+	articles   ArticleController
 }
 
 type AuthController interface {
@@ -68,6 +70,14 @@ type SummaryBrowser interface {
 	ListTopics(ctx context.Context, telegramUserID, summaryID int64) ([]domain.SummaryTopic, error)
 }
 
+type ArticleController interface {
+	ConvertSummary(ctx context.Context, req article.ConvertRequest) (*article.Result, error)
+	ConvertTopic(ctx context.Context, req article.ConvertRequest) (*article.Result, error)
+	List(ctx context.Context, telegramUserID int64, limit int) ([]domain.Article, error)
+	Get(ctx context.Context, telegramUserID, articleID int64) (*domain.Article, error)
+	UpdateMetadata(ctx context.Context, telegramUserID, articleID int64, title string, tags []string) (*domain.Article, error)
+}
+
 func New(addr string, db *sql.DB, logger *slog.Logger) *Server {
 	return NewWithAuth(addr, db, logger, nil)
 }
@@ -93,6 +103,10 @@ func NewWithServices(addr string, db *sql.DB, logger *slog.Logger, auth AuthCont
 }
 
 func NewWithBrowser(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summaryService SummaryController, browser SummaryBrowser) *Server {
+	return NewWithArticle(addr, db, logger, auth, sync, groups, collector, summaryService, browser, nil)
+}
+
+func NewWithArticle(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summaryService SummaryController, browser SummaryBrowser, articles ArticleController) *Server {
 	server := &Server{
 		db:        db,
 		logger:    logger,
@@ -102,6 +116,7 @@ func NewWithBrowser(addr string, db *sql.DB, logger *slog.Logger, auth AuthContr
 		collector: collector,
 		summary:   summaryService,
 		browser:   browser,
+		articles:  articles,
 	}
 
 	mux := http.NewServeMux()
@@ -128,6 +143,11 @@ func NewWithBrowser(addr string, db *sql.DB, logger *slog.Logger, auth AuthContr
 	mux.HandleFunc("GET /summaries", server.summariesList)
 	mux.HandleFunc("GET /summaries/{id}", server.summaryGet)
 	mux.HandleFunc("GET /summaries/{id}/topics", server.summaryTopics)
+	mux.HandleFunc("POST /articles/from-summary/{id}", server.articleFromSummary)
+	mux.HandleFunc("POST /articles/from-summary/{id}/topics/{position}", server.articleFromTopic)
+	mux.HandleFunc("GET /articles", server.articlesList)
+	mux.HandleFunc("GET /articles/{id}", server.articleGet)
+	mux.HandleFunc("PATCH /articles/{id}", server.articleUpdate)
 
 	server.httpServer = &http.Server{
 		Addr:              addr,

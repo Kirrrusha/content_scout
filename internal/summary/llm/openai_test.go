@@ -34,3 +34,28 @@ func TestOpenAICompatibleSummarize(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 }
+
+func TestOpenAICompatibleConvertToArticle(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
+			Message chatMessage `json:"message"`
+		}{{Message: chatMessage{Role: "assistant", Content: `{"title":"Go Guide","type":"guide","tags":["go"],"content_markdown":"# Go Guide\n\n## Источники"}`}}}})
+	}))
+	defer server.Close()
+
+	result, err := NewOpenAICompatible(server.URL, "key", "model", server.Client()).ConvertToArticle(context.Background(), ArticleInput{
+		Language:   "ru",
+		Type:       "guide",
+		SourceKind: "summary_topic",
+		Summary:    "# Digest",
+	})
+	if err != nil {
+		t.Fatalf("ConvertToArticle() error = %v", err)
+	}
+	if result.Title != "Go Guide" || result.Type != "guide" || len(result.Tags) != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+}

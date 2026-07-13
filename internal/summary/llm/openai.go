@@ -71,8 +71,39 @@ func (c *OpenAICompatible) Summarize(ctx context.Context, input SummaryInput) (*
 	return nil, fmt.Errorf("summarize with llm: %w", lastErr)
 }
 
-func (c *OpenAICompatible) ConvertToArticle(context.Context, ArticleInput) (*ArticleResult, error) {
-	return nil, errors.New("article conversion is not implemented yet")
+func (c *OpenAICompatible) ConvertToArticle(ctx context.Context, input ArticleInput) (*ArticleResult, error) {
+	if c.apiKey == "" {
+		return nil, errors.New("LLM_API_KEY is not configured")
+	}
+	if c.model == "" {
+		return nil, errors.New("LLM_MODEL is not configured")
+	}
+	payload := chatRequest{
+		Model: c.model,
+		Messages: []chatMessage{
+			{Role: "system", Content: articleSystemPrompt},
+			{Role: "user", Content: mustJSON(input)},
+		},
+		Temperature:    0.25,
+		ResponseFormat: map[string]string{"type": "json_object"},
+	}
+	var lastErr error
+	for attempt := 0; attempt <= c.retries; attempt++ {
+		raw, err := c.doChat(ctx, payload)
+		if err != nil {
+			lastErr = err
+			sleepBackoff(ctx, attempt)
+			continue
+		}
+		result, err := ParseArticleResult(raw)
+		if err != nil {
+			lastErr = err
+			sleepBackoff(ctx, attempt)
+			continue
+		}
+		return result, nil
+	}
+	return nil, fmt.Errorf("convert article with llm: %w", lastErr)
 }
 
 func (c *OpenAICompatible) doChat(ctx context.Context, payload chatRequest) ([]byte, error) {
@@ -151,3 +182,14 @@ type chatResponse struct {
 const summarySystemPrompt = `Ты формируешь тематическую сводку на русском языке по сообщениям Telegram.
 Не выдумывай факты. Отделяй факты от мнений. Отмечай противоречия и низкую уверенность.
 Верни только JSON: {"title":"string","overview":"string","topics":[{"title":"string","category":"string","short_summary":"string","full_summary":"string","why_important":"string","confidence":"high|medium|low","importance":1,"source_indexes":[0]}]}.`
+
+const articleSystemPrompt = `Ты превращаешь Telegram summary или тему summary в черновик статьи на русском языке.
+Требования: не выдумывай технические детали, сохраняй фактический смысл, убирай рекламу и лишние эмодзи, исправляй обрывочные формулировки, сохраняй код, явно оформляй предупреждения и выводы.
+Структура зависит от type:
+- educational: Что это такое, Зачем это нужно, Как это работает, Пример, Типичные ошибки, Практические рекомендации, Итоги, Источники.
+- guide: Что понадобится, Подготовка, Шаги, Проверка результата, Возможные проблемы, Итоги, Источники.
+- analysis: Кратко, Что произошло, Контекст, Причины, Последствия, Риски, Аргументы сторон, Вывод, Источники.
+- outline: краткий структурированный план с источниками.
+- telegram_post: готовый пост с фактами и источниками.
+Верни только JSON: {"title":"string","type":"educational|guide|analysis|outline|telegram_post","tags":["tag"],"content_markdown":"# ..."}.
+В Markdown добавь раздел "Источники" и используй только переданные source URL.`

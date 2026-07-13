@@ -180,6 +180,7 @@ func summariesMenu(items []domain.Summary) Menu {
 func summaryMenu(summaryID int64) Menu {
 	return Menu{
 		{{Text: "Темы", Data: fmt.Sprintf("sum:topic:%d:1", summaryID)}},
+		{{Text: "Сделать статью", Data: fmt.Sprintf("art:summary:%d", summaryID)}},
 		{{Text: "К истории", Data: "sum:list"}, {Text: "Назад", Data: ActionBackHome}},
 	}
 }
@@ -198,6 +199,7 @@ func topicMenu(summaryID int64, index, total int) Menu {
 	}
 	return Menu{
 		{{Text: "Назад", Data: fmt.Sprintf("sum:topic:%d:%d", summaryID, prev)}, {Text: "Вперёд", Data: fmt.Sprintf("sum:topic:%d:%d", summaryID, next)}},
+		{{Text: "Сделать статью", Data: fmt.Sprintf("art:topic:%d:%d", summaryID, index)}},
 		{{Text: "Summary", Data: fmt.Sprintf("sum:open:%d", summaryID)}, {Text: "К истории", Data: "sum:list"}},
 	}
 }

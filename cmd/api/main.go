@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/app/httpserver"
+	"github.com/kirilllebedenko/content_scout/internal/article"
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/config"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
@@ -81,8 +82,17 @@ func main() {
 		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: 60 * time.Second}),
 	)
 	summaryBrowser := summary.NewBrowser(cfg.TelegramOwnerID, userRepo, summaryRepo)
+	articleService := article.NewService(
+		cfg.TelegramOwnerID,
+		userRepo,
+		summaryRepo,
+		postgres.NewMessageCollectionRepository(db),
+		postgres.NewTelegramChatRepository(db),
+		postgres.NewArticleRepository(db),
+		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: 60 * time.Second}),
+	)
 
-	server := httpserver.NewWithBrowser(cfg.HTTPAddr, db, logger, authService, syncService, groupService, collectionService, summaryService, summaryBrowser)
+	server := httpserver.NewWithArticle(cfg.HTTPAddr, db, logger, authService, syncService, groupService, collectionService, summaryService, summaryBrowser, articleService)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Run()

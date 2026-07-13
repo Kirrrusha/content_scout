@@ -53,6 +53,7 @@ type MessageCollectionRepository interface {
 
 type SummaryRepository interface {
 	CreateJob(ctx context.Context, job domain.SummaryJob) (*domain.SummaryJob, error)
+	FindJob(ctx context.Context, jobID int64) (*domain.SummaryJob, error)
 	UpdateJobStatus(ctx context.Context, jobID int64, status domain.JobStatus, message *string) error
 	CreateSummary(ctx context.Context, summary domain.Summary, topics []domain.SummaryTopic) (*domain.Summary, error)
 	FindSummary(ctx context.Context, summaryID int64) (*domain.Summary, error)
@@ -64,7 +65,9 @@ type SummaryRepository interface {
 type ArticleRepository interface {
 	Create(ctx context.Context, article domain.Article, sources []domain.ArticleSource) (*domain.Article, error)
 	Find(ctx context.Context, articleID int64) (*domain.Article, error)
+	FindByUser(ctx context.Context, userID, articleID int64) (*domain.Article, error)
 	FindBySlug(ctx context.Context, userID int64, slug string) (*domain.Article, error)
+	ListByUser(ctx context.Context, userID int64, limit int) ([]domain.Article, error)
 	Update(ctx context.Context, article domain.Article) (*domain.Article, error)
 }
 

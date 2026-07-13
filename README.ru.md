@@ -4,7 +4,7 @@
 
 Персональный сервис для сводок из Telegram с экспортом Markdown-файлов в Obsidian.
 
-Текущее состояние репозитория: `PR-010 Summary Bot UI`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей, генерация summary через LLM и просмотр истории summary в боте/API.
+Текущее состояние репозитория: `PR-011 Article conversion`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников, jobs сбора сообщений, фильтрация, группировка дублей, генерация summary через LLM, просмотр истории summary и конвертация summary/topics в черновики статей.
 
 ## Архитектура
 
@@ -22,9 +22,10 @@
 - `internal/summary/llm`: provider interfaces, OpenAI-compatible adapter, строгий JSON parsing и retry handling.
 - `internal/summary/pipeline`: общий filter + deduplication pipeline для collected messages.
 - `internal/summary`: сервис генерации summary из collection jobs и owner-checked browser для истории summary.
+- `internal/article`: сценарии конвертации статей, сохранение draft, source links, генерация slug и обновление title/tags.
 - `internal/storage`: repository interfaces.
 - `internal/storage/postgres`: PostgreSQL connection, миграции и реализации repositories.
-- `internal/telegram/bot`: Telegram Bot API polling, owner guard, меню, callback routing, просмотр кэша папок/чатов, UI истории summary, карточки тем и in-memory dialog state.
+- `internal/telegram/bot`: Telegram Bot API polling, owner guard, меню, callback routing, просмотр кэша папок/чатов, UI истории summary, карточки тем, действия с черновиками статей и in-memory dialog state.
 - `internal/telegram/tdlib`: TDLib client interface, state machine авторизации, сохранение сессии, sync service для папок/чатов и placeholder native adapter.
 - `migrations`: обратимые SQL-миграции.
 
@@ -88,6 +89,12 @@ make docker-down
 /summary <summary_id>
 /summary_topics <summary_id>
 /topic <summary_id> <position>
+/article_from_summary <summary_id> [analysis|guide|educational|outline|telegram_post]
+/article_from_topic <summary_id> <position> [analysis|guide|educational|outline|telegram_post]
+/articles
+/article <article_id>
+/article_title <article_id> <новое название>
+/article_tags <article_id> tag1,tag2
 /settings
 ```
 
@@ -170,6 +177,24 @@ GET    /summaries/{id}/topics?telegram_user_id=...
 
 Генерация summary использует collected messages, filter/deduplication pipeline, OpenAI-compatible chat completions provider, строгую JSON validation, retry handling и сохраняет `summary_jobs`, `summaries` и `summary_topics`. Просмотр summary проверяет владельца и отдаёт последние summary, полный markdown одной summary и упорядоченные карточки тем для навигации в боте.
 
+Внутренние endpoints статей:
+
+```text
+POST   /articles/from-summary/{id}
+POST   /articles/from-summary/{id}/topics/{position}
+GET    /articles?telegram_user_id=...&limit=...
+GET    /articles/{id}?telegram_user_id=...
+PATCH  /articles/{id}
+```
+
+Тело запроса конвертации:
+
+```json
+{"telegram_user_id": 123, "type": "analysis", "title": "Optional title", "tags": ["telegram", "ai"]}
+```
+
+Конвертация статей использует тот же OpenAI-compatible provider с отдельным JSON prompt, сохраняет draft в `articles`, source links в `article_sources`, генерирует уникальный slug и поддерживает owner-checked обновление title/tags.
+
 ## Docker
 
 ```sh
@@ -220,4 +245,4 @@ go test ./internal/storage/postgres
 
 ## Следующий PR
 
-`PR-011 — Article conversion`: конвертация сохранённых summary/topics в черновики статей.
+`PR-012 — Obsidian Markdown export`: генерация безопасных Markdown-файлов с frontmatter и отправка через бота.

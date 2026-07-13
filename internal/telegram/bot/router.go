@@ -35,6 +35,7 @@ type Router struct {
 	collector CollectionController
 	summary   SummaryController
 	browser   SummaryBrowserController
+	articles  ArticleController
 }
 
 func NewRouter(ownerID int64, states StateStore) *Router {
@@ -62,7 +63,11 @@ func NewRouterWithServices(ownerID int64, states StateStore, auth AuthController
 }
 
 func NewRouterWithBrowser(ownerID int64, states StateStore, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summary SummaryController, browser SummaryBrowserController) *Router {
-	return &Router{ownerID: ownerID, states: states, auth: auth, sync: sync, groups: groups, collector: collector, summary: summary, browser: browser}
+	return NewRouterWithArticle(ownerID, states, auth, sync, groups, collector, summary, browser, nil)
+}
+
+func NewRouterWithArticle(ownerID int64, states StateStore, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summary SummaryController, browser SummaryBrowserController, articles ArticleController) *Router {
+	return &Router{ownerID: ownerID, states: states, auth: auth, sync: sync, groups: groups, collector: collector, summary: summary, browser: browser, articles: articles}
 }
 
 func (r *Router) Handle(ctx context.Context, in Incoming) (Outgoing, error) {
@@ -135,6 +140,18 @@ func (r *Router) handleMessage(ctx context.Context, in Incoming) (Outgoing, erro
 		return r.showSummaryTopics(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/summary_topics")), 0, "")
 	case "topic":
 		return r.showTopic(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/topic")), 0, "")
+	case "article_from_summary":
+		return r.createArticleFromSummary(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/article_from_summary")), 0, "")
+	case "article_from_topic":
+		return r.createArticleFromTopic(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/article_from_topic")), 0, "")
+	case "articles":
+		return r.showArticles(ctx, in.ChatID, in.UserID, 0, "")
+	case "article":
+		return r.showArticle(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/article")), 0, "")
+	case "article_title":
+		return r.renameArticle(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/article_title")), 0, "")
+	case "article_tags":
+		return r.updateArticleTags(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/article_tags")), 0, "")
 	case "settings":
 		return r.showSettings(ctx, in.ChatID, in.UserID, 0, "")
 	default:
@@ -153,6 +170,11 @@ func (r *Router) handleCallback(ctx context.Context, in Incoming) (Outgoing, err
 		out.CallbackID = in.CallbackID
 		return out, err
 	}
+	if strings.HasPrefix(in.CallbackData, "art:") {
+		out, err = r.handleArticleCallback(ctx, in)
+		out.CallbackID = in.CallbackID
+		return out, err
+	}
 	switch in.CallbackData {
 	case ActionBackHome:
 		out, err = r.showHome(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Открыто главное меню.")
@@ -167,7 +189,7 @@ func (r *Router) handleCallback(ctx context.Context, in Incoming) (Outgoing, err
 	case ActionHistory:
 		out, err = r.showSummaries(ctx, in.ChatID, in.UserID, in.CallbackMessage, "История открыта.")
 	case ActionArticles:
-		out, err = r.showPlaceholder(ctx, in.ChatID, in.UserID, ViewArticles, "Черновики статей появятся здесь после реализации конвертации.", in.CallbackMessage, "Статьи открыты.")
+		out, err = r.showArticles(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Статьи открыты.")
 	case ActionSettings:
 		out, err = r.showSettings(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Настройки открыты.")
 	case ActionAuthConnect:

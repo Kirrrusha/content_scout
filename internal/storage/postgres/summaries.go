@@ -27,6 +27,21 @@ func (r *SummaryRepository) CreateJob(ctx context.Context, job domain.SummaryJob
 	return scanSummaryJob(r.db.QueryRowContext(ctx, query, job.UserID, job.SourceType, job.SourceID, job.Status, nullTime(job.StartedAt), nullTime(job.CompletedAt), nullString(job.Error)))
 }
 
+func (r *SummaryRepository) FindJob(ctx context.Context, jobID int64) (*domain.SummaryJob, error) {
+	job, err := scanSummaryJob(r.db.QueryRowContext(ctx, `
+		SELECT id, user_id, source_type, source_id, status, started_at, completed_at, error, created_at
+		FROM summary_jobs
+		WHERE id = $1
+	`, jobID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find summary job: %w", err)
+	}
+	return job, nil
+}
+
 func (r *SummaryRepository) UpdateJobStatus(ctx context.Context, jobID int64, status domain.JobStatus, message *string) error {
 	var completedAt sql.NullTime
 	if status == domain.JobStatusCompleted || status == domain.JobStatusFailed {

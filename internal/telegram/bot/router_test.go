@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kirilllebedenko/content_scout/internal/article"
 	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/domain"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
@@ -391,6 +392,59 @@ func TestRouterSummaryTopicCallback(t *testing.T) {
 	}
 }
 
+func TestRouterArticleFromTopicCallback(t *testing.T) {
+	ctx := context.Background()
+	articles := &fakeArticleController{
+		result: &article.Result{Article: domain.Article{ID: 7, Title: "Go Guide", Slug: "go-guide", Type: domain.ArticleTypeGuide, Status: domain.ArticleStatusDraft, Tags: []string{"go"}}, Sources: 2},
+	}
+	router := NewRouterWithArticle(42, NewMemoryStateStore(), nil, nil, nil, nil, nil, nil, articles)
+
+	out, err := router.Handle(ctx, Incoming{
+		Kind:            IncomingCallback,
+		UserID:          42,
+		ChatID:          100,
+		CallbackID:      "callback-1",
+		CallbackData:    "art:topic:10:2",
+		CallbackMessage: 7,
+	})
+	if err != nil {
+		t.Fatalf("Handle(article topic callback) error = %v", err)
+	}
+	if articles.topicRequest.SummaryID != 10 || articles.topicRequest.TopicPosition != 2 {
+		t.Fatalf("request = %+v", articles.topicRequest)
+	}
+	if out.EditMessageID != 7 || out.CallbackID != "callback-1" {
+		t.Fatalf("out = %+v", out)
+	}
+	if !strings.Contains(out.Text, "Черновик статьи создан") || !strings.Contains(out.Text, "Go Guide") {
+		t.Fatalf("output = %q", out.Text)
+	}
+}
+
+func TestRouterArticleTitleCommand(t *testing.T) {
+	ctx := context.Background()
+	articles := &fakeArticleController{
+		updated: &domain.Article{ID: 7, Title: "New title", Slug: "old", Type: domain.ArticleTypeAnalysis, Status: domain.ArticleStatusDraft, ContentMarkdown: "# Old"},
+	}
+	router := NewRouterWithArticle(42, NewMemoryStateStore(), nil, nil, nil, nil, nil, nil, articles)
+
+	out, err := router.Handle(ctx, Incoming{
+		Kind:   IncomingMessage,
+		UserID: 42,
+		ChatID: 100,
+		Text:   "/article_title 7 New title",
+	})
+	if err != nil {
+		t.Fatalf("Handle(article_title) error = %v", err)
+	}
+	if articles.updateArticleID != 7 || articles.updateTitle != "New title" {
+		t.Fatalf("update article=%d title=%q", articles.updateArticleID, articles.updateTitle)
+	}
+	if !strings.Contains(out.Text, "New title") {
+		t.Fatalf("output = %q", out.Text)
+	}
+}
+
 type fakeAuthController struct {
 	started     bool
 	deleted     bool
@@ -552,4 +606,42 @@ func (f *fakeSummaryBrowserController) TopicCard(_ context.Context, _ int64, sum
 	f.cardSummaryID = summaryID
 	f.cardPosition = position
 	return f.card, nil
+}
+
+type fakeArticleController struct {
+	result          *article.Result
+	updated         *domain.Article
+	summaryRequest  article.ConvertRequest
+	topicRequest    article.ConvertRequest
+	updateArticleID int64
+	updateTitle     string
+	updateTags      []string
+}
+
+func (f *fakeArticleController) ConvertSummary(_ context.Context, req article.ConvertRequest) (*article.Result, error) {
+	f.summaryRequest = req
+	return f.result, nil
+}
+
+func (f *fakeArticleController) ConvertTopic(_ context.Context, req article.ConvertRequest) (*article.Result, error) {
+	f.topicRequest = req
+	return f.result, nil
+}
+
+func (f *fakeArticleController) List(context.Context, int64, int) ([]domain.Article, error) {
+	return nil, nil
+}
+
+func (f *fakeArticleController) Get(context.Context, int64, int64) (*domain.Article, error) {
+	return nil, nil
+}
+
+func (f *fakeArticleController) UpdateMetadata(_ context.Context, _ int64, articleID int64, title string, tags []string) (*domain.Article, error) {
+	f.updateArticleID = articleID
+	f.updateTitle = title
+	f.updateTags = tags
+	if f.updated != nil {
+		return f.updated, nil
+	}
+	return &domain.Article{ID: articleID, Title: title, Tags: tags}, nil
 }

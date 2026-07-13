@@ -9,6 +9,7 @@ type Article struct {
 	Slug            string
 	Type            ArticleType
 	Status          ArticleStatus
+	Tags            []string
 	ContentMarkdown string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time

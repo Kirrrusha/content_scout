@@ -4,7 +4,7 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-010 Summary Bot UI`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, LLM summary generation, and summary history browsing in the bot/API.
+This repository is currently at `PR-011 Article conversion`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, LLM summary generation, summary history browsing, and article draft conversion from summaries/topics.
 
 ## Architecture
 
@@ -24,7 +24,8 @@ This repository is currently at `PR-010 Summary Bot UI`: project structure, conf
 - `internal/summary/llm`: LLM provider interfaces, OpenAI-compatible adapter, strict JSON parsing, and retry handling.
 - `internal/summary/pipeline`: composed filter + deduplication processing for collected messages.
 - `internal/summary`: summary generation service from collection jobs and owner-checked summary browser.
-- `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, cached folder/chat views, summary history UI, topic cards, and in-memory dialog state.
+- `internal/article`: article conversion use cases, draft persistence, source link capture, slug generation, and title/tag metadata updates.
+- `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, cached folder/chat views, summary history UI, topic cards, article draft actions, and in-memory dialog state.
 - `internal/telegram/tdlib`: TDLib client interface, authorization state machine, session persistence, folder/chat sync service, and unavailable native adapter placeholder.
 - `migrations`: reversible SQL migrations.
 
@@ -88,6 +89,12 @@ Bot commands currently available:
 /summary <summary_id>
 /summary_topics <summary_id>
 /topic <summary_id> <position>
+/article_from_summary <summary_id> [analysis|guide|educational|outline|telegram_post]
+/article_from_topic <summary_id> <position> [analysis|guide|educational|outline|telegram_post]
+/articles
+/article <article_id>
+/article_title <article_id> <new title>
+/article_tags <article_id> tag1,tag2
 /settings
 ```
 
@@ -170,6 +177,24 @@ Request body:
 
 Summary generation uses the collected messages, filter/deduplication pipeline, an OpenAI-compatible chat completions provider, strict JSON validation, retry handling, and persists `summary_jobs`, `summaries`, and `summary_topics`. Summary browsing is owner-checked and exposes the latest summaries, full markdown for a single summary, and ordered topic cards for bot navigation.
 
+Internal article endpoints:
+
+```text
+POST   /articles/from-summary/{id}
+POST   /articles/from-summary/{id}/topics/{position}
+GET    /articles?telegram_user_id=...&limit=...
+GET    /articles/{id}?telegram_user_id=...
+PATCH  /articles/{id}
+```
+
+Conversion request body:
+
+```json
+{"telegram_user_id": 123, "type": "analysis", "title": "Optional title", "tags": ["telegram", "ai"]}
+```
+
+Article conversion uses the same OpenAI-compatible provider with a dedicated JSON prompt, saves drafts to `articles`, stores source links in `article_sources`, generates unique slugs, and supports owner-checked title/tag updates.
+
 ## Docker
 
 ```sh
@@ -220,4 +245,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-`PR-011 — Article conversion` should convert saved summaries/topics into article drafts.
+`PR-012 — Obsidian Markdown export` should render safe Markdown files with frontmatter and send them through the bot.
