@@ -2,7 +2,7 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-001 Bootstrap`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, Makefile, CI, and the first `users` repository.
+This repository is currently at `PR-002 Domain and repositories`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, and PostgreSQL repository implementations.
 
 ## Architecture
 
@@ -12,7 +12,9 @@ This repository is currently at `PR-001 Bootstrap`: project structure, configura
 - `cmd/tdlib-worker`: TDLib worker placeholder for PR-004.
 - `cmd/summary-worker`: background summary worker placeholder for later PRs.
 - `internal/config`: environment-based configuration.
-- `internal/storage/postgres`: PostgreSQL connection, migrations, repositories.
+- `internal/domain`: core entities and enums.
+- `internal/storage`: repository interfaces.
+- `internal/storage/postgres`: PostgreSQL connection, migrations, repository implementations.
 - `migrations`: reversible SQL migrations.
 
 TDLib and LLM integrations are intentionally not connected in this bootstrap step.
@@ -62,12 +64,29 @@ http://localhost:8080/ready
 
 ## Database
 
-The first migration creates:
+The migrations create:
 
 - `schema_migrations`
 - `users`
+- `telegram_sessions`
+- `telegram_folders`
+- `telegram_chats`
+- `source_groups`
+- `source_group_chats`
+- `read_positions`
+- `summary_jobs`
+- `summaries`
+- `summary_topics`
+- `articles`
+- `article_sources`
+- `obsidian_exports`
 
 Integration tests use `TEST_DATABASE_URL`. If it is not set, PostgreSQL integration tests are skipped.
+
+```sh
+export TEST_DATABASE_URL='postgres://postgres:postgres@localhost:5432/telegram_summary_test?sslmode=disable'
+go test ./internal/storage/postgres
+```
 
 ## Security Notes
 
@@ -78,4 +97,4 @@ Integration tests use `TEST_DATABASE_URL`. If it is not set, PostgreSQL integrat
 
 ## Next PR
 
-`PR-002 — Domain and repositories` should add the remaining domain entities, repository interfaces, PostgreSQL implementations, and focused tests for persistence behavior.
+`PR-003 — Telegram Bot shell` should add `/start`, owner-only middleware, the main menu, callback routing, and basic dialog state. TDLib authorization remains planned for PR-004.
