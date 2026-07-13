@@ -4,7 +4,7 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-006 Source groups`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, and user-defined source groups.
+This repository is currently at `PR-007 Message collection`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, and message collection jobs.
 
 ## Architecture
 
@@ -13,6 +13,7 @@ This repository is currently at `PR-006 Source groups`: project structure, confi
 - `cmd/bot`: Telegram Bot process with owner-only shell navigation.
 - `cmd/tdlib-worker`: TDLib worker shell.
 - `cmd/summary-worker`: background summary worker placeholder for later PRs.
+- `internal/collection`: message collection use cases for source groups.
 - `internal/config`: environment-based configuration.
 - `internal/domain`: core entities and enums.
 - `internal/storage`: repository interfaces.
@@ -76,6 +77,7 @@ Bot commands currently available:
 /group_chats <id>
 /group_add_chat <group_id> <chat_id> [priority]
 /group_remove_chat <group_id> <chat_id>
+/collect_group <group_id> [new|24h|3d|week|latest_n] [limit]
 /settings
 ```
 
@@ -118,6 +120,20 @@ DELETE /groups/{id}/chats/{chatId}
 
 Group create/update bodies use `telegram_user_id`, `name`, and optional `description`. Adding a chat uses `telegram_user_id`, `chat_id`, optional `priority`, and optional `enabled`.
 
+Internal message collection endpoint:
+
+```text
+POST   /collections/group/{id}
+```
+
+Request body:
+
+```json
+{"telegram_user_id": 123, "mode": "new", "limit": 100}
+```
+
+Supported modes are `new`, `24h`, `3d`, `week`, and `latest_n`. Collection jobs store fetched messages but intentionally do not advance `read_positions`; that happens only after a later successful summary.
+
 ## Docker
 
 ```sh
@@ -146,6 +162,8 @@ The migrations create:
 - `summary_jobs`
 - `summaries`
 - `summary_topics`
+- `message_collection_jobs`
+- `collected_messages`
 - `articles`
 - `article_sources`
 - `obsidian_exports`
@@ -166,4 +184,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-`PR-007 — Message collection` should add chat history collection, date ranges, last summarized positions, collection jobs, and tests that ensure read positions are not advanced before a successful summary.
+`PR-008 — Filtering and deduplication` should add normalization, noise filtering, duplicate clustering, filter statistics, and tests for repost/duplicate behavior.

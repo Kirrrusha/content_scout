@@ -4,11 +4,12 @@
 
 Персональный сервис для сводок из Telegram с экспортом Markdown-файлов в Obsidian.
 
-Текущее состояние репозитория: `PR-006 Source groups`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов и пользовательские группы источников.
+Текущее состояние репозитория: `PR-007 Message collection`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов, пользовательские группы источников и jobs сбора сообщений.
 
 ## Архитектура
 
 - `cmd/api`: внутренний HTTP API. Доступны `/health` и `/ready`.
+- `internal/collection`: сценарии сбора сообщений для групп источников.
 - `cmd/migrate`: легкий runner SQL-миграций.
 - `cmd/bot`: процесс Telegram-бота с owner-only навигацией.
 - `cmd/tdlib-worker`: shell TDLib worker.
@@ -76,6 +77,7 @@ make docker-down
 /group_chats <id>
 /group_add_chat <group_id> <chat_id> [priority]
 /group_remove_chat <group_id> <chat_id>
+/collect_group <group_id> [new|24h|3d|week|latest_n] [limit]
 /settings
 ```
 
@@ -118,6 +120,20 @@ DELETE /groups/{id}/chats/{chatId}
 
 Create/update группы используют `telegram_user_id`, `name` и опциональный `description`. Добавление чата использует `telegram_user_id`, `chat_id`, опциональный `priority` и опциональный `enabled`.
 
+Внутренний endpoint сбора сообщений:
+
+```text
+POST   /collections/group/{id}
+```
+
+Тело запроса:
+
+```json
+{"telegram_user_id": 123, "mode": "new", "limit": 100}
+```
+
+Поддерживаемые режимы: `new`, `24h`, `3d`, `week` и `latest_n`. Collection jobs сохраняют найденные сообщения, но намеренно не сдвигают `read_positions`; позиция будет обновляться только после успешного summary в следующем этапе.
+
 ## Docker
 
 ```sh
@@ -146,6 +162,8 @@ http://localhost:8080/ready
 - `summary_jobs`
 - `summaries`
 - `summary_topics`
+- `message_collection_jobs`
+- `collected_messages`
 - `articles`
 - `article_sources`
 - `obsidian_exports`
@@ -166,4 +184,4 @@ go test ./internal/storage/postgres
 
 ## Следующий PR
 
-`PR-007 — Message collection`: сбор истории чатов, диапазоны дат, last summarized positions, collection jobs и тесты, что read position не сдвигается до успешного summary.
+`PR-008 — Filtering and deduplication`: нормализация, фильтрация шума, группировка дублей, статистика фильтрации и тесты для репостов/дубликатов.

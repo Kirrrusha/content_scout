@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/domain"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
@@ -22,6 +23,7 @@ type Server struct {
 	auth       AuthController
 	sync       SyncController
 	groups     GroupController
+	collector  CollectionController
 }
 
 type AuthController interface {
@@ -49,6 +51,10 @@ type GroupController interface {
 	ListChats(ctx context.Context, telegramUserID, groupID int64) (*sourcegroups.GroupWithChats, error)
 }
 
+type CollectionController interface {
+	CollectGroup(ctx context.Context, req collection.Request) (*collection.Result, error)
+}
+
 func New(addr string, db *sql.DB, logger *slog.Logger) *Server {
 	return NewWithAuth(addr, db, logger, nil)
 }
@@ -62,12 +68,17 @@ func NewWithControllers(addr string, db *sql.DB, logger *slog.Logger, auth AuthC
 }
 
 func NewWithAllControllers(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController, groups GroupController) *Server {
+	return NewWithRuntime(addr, db, logger, auth, sync, groups, nil)
+}
+
+func NewWithRuntime(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController, groups GroupController, collector CollectionController) *Server {
 	server := &Server{
-		db:     db,
-		logger: logger,
-		auth:   auth,
-		sync:   sync,
-		groups: groups,
+		db:        db,
+		logger:    logger,
+		auth:      auth,
+		sync:      sync,
+		groups:    groups,
+		collector: collector,
 	}
 
 	mux := http.NewServeMux()
@@ -89,6 +100,7 @@ func NewWithAllControllers(addr string, db *sql.DB, logger *slog.Logger, auth Au
 	mux.HandleFunc("GET /groups/{id}/chats", server.groupChatsList)
 	mux.HandleFunc("POST /groups/{id}/chats", server.groupChatsAdd)
 	mux.HandleFunc("DELETE /groups/{id}/chats/{chatId}", server.groupChatsRemove)
+	mux.HandleFunc("POST /collections/group/{id}", server.collectionGroupCreate)
 
 	server.httpServer = &http.Server{
 		Addr:              addr,

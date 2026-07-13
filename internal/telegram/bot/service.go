@@ -28,6 +28,10 @@ func NewServiceWithControllers(token string, ownerID int64, auth AuthController,
 }
 
 func NewServiceWithAllControllers(token string, ownerID int64, auth AuthController, sync SyncController, groups GroupController, logger *slog.Logger) (*Service, error) {
+	return NewServiceWithRuntime(token, ownerID, auth, sync, groups, nil, logger)
+}
+
+func NewServiceWithRuntime(token string, ownerID int64, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, logger *slog.Logger) (*Service, error) {
 	if token == "" {
 		return nil, fmt.Errorf("telegram bot token is not configured")
 	}
@@ -37,7 +41,7 @@ func NewServiceWithAllControllers(token string, ownerID int64, auth AuthControll
 	}
 	return &Service{
 		api:    api,
-		router: NewRouterWithAllControllers(ownerID, NewMemoryStateStore(), auth, sync, groups),
+		router: NewRouterWithRuntime(ownerID, NewMemoryStateStore(), auth, sync, groups, collector),
 		logger: logger,
 	}, nil
 }

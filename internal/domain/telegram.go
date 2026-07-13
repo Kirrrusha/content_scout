@@ -72,3 +72,36 @@ type TelegramMessage struct {
 	HasMedia   bool
 	MediaType  string
 }
+
+type MessageCollectionJob struct {
+	ID        int64
+	UserID    int64
+	GroupID   int64
+	Mode      CollectionMode
+	Limit     int
+	Status    JobStatus
+	Error     *string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type CollectedMessage struct {
+	ID             int64
+	JobID          int64
+	UserID         int64
+	ChatID         int64
+	TelegramChatID int64
+	MessageID      int64
+	Date           time.Time
+	EditDate       *time.Time
+	SenderID       int64
+	SenderName     string
+	Text           string
+	Caption        string
+	URL            string
+	ReplyToID      *int64
+	Forwarded      bool
+	HasMedia       bool
+	MediaType      string
+	CreatedAt      time.Time
+}

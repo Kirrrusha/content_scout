@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/domain"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
@@ -276,6 +277,30 @@ func TestRouterSourceGroupCommands(t *testing.T) {
 	}
 }
 
+func TestRouterCollectGroupCommand(t *testing.T) {
+	ctx := context.Background()
+	collector := &fakeCollectionController{
+		result: &collection.Result{JobID: 9, ChatsCount: 2, MessagesCount: 5},
+	}
+	router := NewRouterWithRuntime(42, NewMemoryStateStore(), nil, nil, nil, collector)
+
+	out, err := router.Handle(ctx, Incoming{
+		Kind:   IncomingMessage,
+		UserID: 42,
+		ChatID: 100,
+		Text:   "/collect_group 7 24h 25",
+	})
+	if err != nil {
+		t.Fatalf("Handle(collect_group) error = %v", err)
+	}
+	if collector.request.GroupID != 7 || collector.request.Mode != domain.CollectionModeLast24H || collector.request.Limit != 25 {
+		t.Fatalf("request = %+v", collector.request)
+	}
+	if !strings.Contains(out.Text, "Сообщений: 5") {
+		t.Fatalf("output = %q", out.Text)
+	}
+}
+
 type fakeAuthController struct {
 	started     bool
 	deleted     bool
@@ -379,4 +404,14 @@ func (f *fakeGroupController) RemoveChat(context.Context, int64, int64, int64) e
 
 func (f *fakeGroupController) ListChats(context.Context, int64, int64) (*sourcegroups.GroupWithChats, error) {
 	return f.withChats, nil
+}
+
+type fakeCollectionController struct {
+	request collection.Request
+	result  *collection.Result
+}
+
+func (f *fakeCollectionController) CollectGroup(_ context.Context, req collection.Request) (*collection.Result, error) {
+	f.request = req
+	return f.result, nil
 }

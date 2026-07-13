@@ -65,3 +65,13 @@ const (
 	ArticleStatusPublished ArticleStatus = "published"
 	ArticleStatusArchived  ArticleStatus = "archived"
 )
+
+type CollectionMode string
+
+const (
+	CollectionModeNewOnly CollectionMode = "new"
+	CollectionModeLast24H CollectionMode = "24h"
+	CollectionModeLast3D  CollectionMode = "3d"
+	CollectionModeWeek    CollectionMode = "week"
+	CollectionModeLatestN CollectionMode = "latest_n"
+)

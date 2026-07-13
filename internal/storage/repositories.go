@@ -43,6 +43,13 @@ type ReadPositionRepository interface {
 	Find(ctx context.Context, userID, chatID int64) (*domain.ReadPosition, error)
 }
 
+type MessageCollectionRepository interface {
+	CreateJob(ctx context.Context, job domain.MessageCollectionJob) (*domain.MessageCollectionJob, error)
+	UpdateJobStatus(ctx context.Context, jobID int64, status domain.JobStatus, message *string) error
+	AddMessages(ctx context.Context, messages []domain.CollectedMessage) error
+	ListMessages(ctx context.Context, jobID int64) ([]domain.CollectedMessage, error)
+}
+
 type SummaryRepository interface {
 	CreateJob(ctx context.Context, job domain.SummaryJob) (*domain.SummaryJob, error)
 	UpdateJobStatus(ctx context.Context, jobID int64, status domain.JobStatus, message *string) error

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/app/httpserver"
+	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/config"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/storage/postgres"
@@ -57,8 +58,18 @@ func main() {
 		postgres.NewSourceGroupRepository(db),
 		postgres.NewTelegramChatRepository(db),
 	)
+	collectionService := collection.NewService(
+		cfg.TelegramOwnerID,
+		userRepo,
+		sessionRepo,
+		postgres.NewSourceGroupRepository(db),
+		postgres.NewTelegramChatRepository(db),
+		postgres.NewReadPositionRepository(db),
+		postgres.NewMessageCollectionRepository(db),
+		factory,
+	)
 
-	server := httpserver.NewWithAllControllers(cfg.HTTPAddr, db, logger, authService, syncService, groupService)
+	server := httpserver.NewWithRuntime(cfg.HTTPAddr, db, logger, authService, syncService, groupService, collectionService)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Run()

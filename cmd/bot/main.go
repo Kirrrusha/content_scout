@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/kirilllebedenko/content_scout/internal/collection"
 	"github.com/kirilllebedenko/content_scout/internal/config"
 	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/storage/postgres"
@@ -64,8 +65,18 @@ func main() {
 		postgres.NewSourceGroupRepository(db),
 		postgres.NewTelegramChatRepository(db),
 	)
+	collectionService := collection.NewService(
+		cfg.TelegramOwnerID,
+		userRepo,
+		sessionRepo,
+		postgres.NewSourceGroupRepository(db),
+		postgres.NewTelegramChatRepository(db),
+		postgres.NewReadPositionRepository(db),
+		postgres.NewMessageCollectionRepository(db),
+		factory,
+	)
 
-	service, err := tgbot.NewServiceWithAllControllers(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, syncService, groupService, logger)
+	service, err := tgbot.NewServiceWithRuntime(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, syncService, groupService, collectionService, logger)
 	if err != nil {
 		logger.Error("create bot service failed", "error", err)
 		os.Exit(1)

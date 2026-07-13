@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kirilllebedenko/content_scout/internal/collection"
+	"github.com/kirilllebedenko/content_scout/internal/domain"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
@@ -24,11 +26,12 @@ const (
 )
 
 type Router struct {
-	ownerID int64
-	states  StateStore
-	auth    AuthController
-	sync    SyncController
-	groups  GroupController
+	ownerID   int64
+	states    StateStore
+	auth      AuthController
+	sync      SyncController
+	groups    GroupController
+	collector CollectionController
 }
 
 func NewRouter(ownerID int64, states StateStore) *Router {
@@ -44,7 +47,11 @@ func NewRouterWithControllers(ownerID int64, states StateStore, auth AuthControl
 }
 
 func NewRouterWithAllControllers(ownerID int64, states StateStore, auth AuthController, sync SyncController, groups GroupController) *Router {
-	return &Router{ownerID: ownerID, states: states, auth: auth, sync: sync, groups: groups}
+	return NewRouterWithRuntime(ownerID, states, auth, sync, groups, nil)
+}
+
+func NewRouterWithRuntime(ownerID int64, states StateStore, auth AuthController, sync SyncController, groups GroupController, collector CollectionController) *Router {
+	return &Router{ownerID: ownerID, states: states, auth: auth, sync: sync, groups: groups, collector: collector}
 }
 
 func (r *Router) Handle(ctx context.Context, in Incoming) (Outgoing, error) {
@@ -105,6 +112,8 @@ func (r *Router) handleMessage(ctx context.Context, in Incoming) (Outgoing, erro
 		return r.removeGroupChat(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_remove_chat")))
 	case "group_chats":
 		return r.showGroupChats(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_chats")))
+	case "collect_group":
+		return r.collectGroup(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/collect_group")))
 	case "settings":
 		return r.showSettings(ctx, in.ChatID, in.UserID, 0, "")
 	default:
@@ -506,4 +515,40 @@ func (r *Router) showGroupChats(ctx context.Context, chatID, userID int64, raw s
 		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu()}, nil
 	}
 	return Outgoing{ChatID: chatID, Text: groupChatsText(group), Menu: BackMenu()}, nil
+}
+
+func (r *Router) collectGroup(ctx context.Context, chatID, userID int64, raw string) (Outgoing, error) {
+	if r.collector == nil {
+		return Outgoing{ChatID: chatID, Text: "Сбор сообщений пока не настроен.", Menu: BackMenu()}, nil
+	}
+	parts := strings.Fields(raw)
+	if len(parts) == 0 {
+		return Outgoing{ChatID: chatID, Text: "Использование: /collect_group <group_id> [new|24h|3d|week|latest_n] [limit]", Menu: BackMenu()}, nil
+	}
+	groupID, err := parseID(parts[0])
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: "Некорректный ID группы.", Menu: BackMenu()}, nil
+	}
+	mode := domain.CollectionModeNewOnly
+	if len(parts) > 1 {
+		mode = parseCollectionMode(parts[1])
+	}
+	limit := 100
+	if len(parts) > 2 {
+		parsed, err := strconv.Atoi(parts[2])
+		if err != nil || parsed <= 0 {
+			return Outgoing{ChatID: chatID, Text: "Некорректный limit.", Menu: BackMenu()}, nil
+		}
+		limit = parsed
+	}
+	result, err := r.collector.CollectGroup(ctx, collection.Request{
+		TelegramUserID: userID,
+		GroupID:        groupID,
+		Mode:           mode,
+		Limit:          limit,
+	})
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu()}, nil
+	}
+	return Outgoing{ChatID: chatID, Text: collectionResultText(result), Menu: BackMenu()}, nil
 }
