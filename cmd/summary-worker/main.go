@@ -74,6 +74,17 @@ func main() {
 		summaryRepo,
 		postgres.NewObsidianExportRepository(db),
 	)
+	if cfg.ObsidianAPIKey != "" {
+		exporter = obsidian.NewServiceWithREST(
+			cfg.TelegramOwnerID,
+			cfg.ExportDir,
+			userRepo,
+			postgres.NewArticleRepository(db),
+			summaryRepo,
+			postgres.NewObsidianExportRepository(db),
+			obsidian.NewRESTClient(cfg.ObsidianRESTURL, cfg.ObsidianAPIKey, cfg.ObsidianInsecure),
+		)
+	}
 	service := scheduler.NewService(
 		cfg.TelegramOwnerID,
 		postgres.NewSummaryScheduleRepository(db),

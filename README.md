@@ -4,7 +4,7 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-013 Scheduling`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, LLM summary generation, summary history browsing, article draft conversion, Markdown export for Obsidian, and scheduled summary runs.
+This repository is currently at `PR-014 Obsidian REST integration`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, LLM summary generation, summary history browsing, article draft conversion, Markdown export for Obsidian, scheduled summary runs, and optional Obsidian Local REST API note writes.
 
 ## Architecture
 
@@ -25,7 +25,7 @@ This repository is currently at `PR-013 Scheduling`: project structure, configur
 - `internal/summary/pipeline`: composed filter + deduplication processing for collected messages.
 - `internal/summary`: summary generation service from collection jobs and owner-checked summary browser.
 - `internal/article`: article conversion use cases, draft persistence, source link capture, slug generation, and title/tag metadata updates.
-- `internal/obsidian`: Markdown rendering, YAML frontmatter, safe filenames, SHA-256 deduplication, and export file persistence.
+- `internal/obsidian`: Markdown rendering, YAML frontmatter, safe filenames, SHA-256 deduplication, export file persistence, and optional Obsidian Local REST API create/update with backups.
 - `internal/scheduler`: enabled schedule polling, timezone-aware daily due checks, quiet hours, and collection -> summary -> optional export orchestration.
 - `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, cached folder/chat views, summary history UI, topic cards, article draft actions, and in-memory dialog state.
 - `internal/telegram/tdlib`: TDLib client interface, authorization state machine, session persistence, folder/chat sync service, and unavailable native adapter placeholder.
@@ -214,6 +214,8 @@ Request body:
 
 Markdown exports are written under `EXPORT_DIR`, include YAML frontmatter, use safe `.md` filenames, preserve Telegram source links for article drafts, calculate SHA-256 content hashes, and reuse existing `obsidian_exports` records for identical content. The bot sends the generated Markdown as a Telegram document.
 
+If `OBSIDIAN_API_KEY` is set, exports are also written directly to Obsidian through the [Local REST API plugin](https://github.com/coddingtonbear/obsidian-local-rest-api). Configure `OBSIDIAN_REST_URL` for the API base URL, and set `OBSIDIAN_INSECURE_SKIP_VERIFY=true` when using the plugin's self-signed HTTPS certificate. Existing notes are backed up to `*.backup-YYYYMMDD-HHMMSS.md` before update.
+
 Scheduled summaries are stored in `summary_schedules` and executed by `cmd/summary-worker`. The MVP supports daily schedule strings in `HH:MM`, `daily@HH:MM`, or `@daily` format, IANA timezones, quiet-hour windows, summary format, and optional export to Obsidian. Each attempt is recorded in `schedule_runs`.
 
 ## Docker
@@ -268,4 +270,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-`PR-014 — Obsidian REST integration` should add direct note create/update through Obsidian Local REST API.
+The planned PR sequence from the initial roadmap is complete through `PR-014`. A natural next step is hardening: native TDLib adapter, service-token auth for the internal API, and observability.

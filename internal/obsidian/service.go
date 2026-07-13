@@ -26,7 +26,14 @@ type Service struct {
 	articles        storage.ArticleRepository
 	summaries       storage.SummaryRepository
 	exports         storage.ObsidianExportRepository
+	rest            RESTNoteClient
 	now             func() time.Time
+}
+
+type RESTNoteClient interface {
+	Enabled() bool
+	ReadNote(ctx context.Context, vaultPath string) ([]byte, error)
+	WriteNote(ctx context.Context, vaultPath string, content []byte) error
 }
 
 type Result struct {
@@ -37,6 +44,10 @@ type Result struct {
 }
 
 func NewService(ownerTelegramID int64, exportDir string, users storage.UserRepository, articles storage.ArticleRepository, summaries storage.SummaryRepository, exports storage.ObsidianExportRepository) *Service {
+	return NewServiceWithREST(ownerTelegramID, exportDir, users, articles, summaries, exports, nil)
+}
+
+func NewServiceWithREST(ownerTelegramID int64, exportDir string, users storage.UserRepository, articles storage.ArticleRepository, summaries storage.SummaryRepository, exports storage.ObsidianExportRepository, rest RESTNoteClient) *Service {
 	if strings.TrimSpace(exportDir) == "" {
 		exportDir = "./data/exports"
 	}
@@ -47,6 +58,7 @@ func NewService(ownerTelegramID int64, exportDir string, users storage.UserRepos
 		articles:        articles,
 		summaries:       summaries,
 		exports:         exports,
+		rest:            rest,
 		now:             time.Now,
 	}
 }
@@ -109,18 +121,42 @@ func (s *Service) persist(ctx context.Context, content []byte, fileName, vaultPa
 	if err := os.WriteFile(path, content, 0o644); err != nil {
 		return nil, fmt.Errorf("write obsidian markdown: %w", err)
 	}
+	exportMethod := "telegram_document"
+	if s.rest != nil && s.rest.Enabled() {
+		if err := s.writeRESTNote(ctx, vaultPath, content); err != nil {
+			return nil, err
+		}
+		exportMethod = "obsidian_rest"
+	}
 	created, err := s.exports.Create(ctx, domain.ObsidianExport{
 		ArticleID:    articleID,
 		SummaryID:    summaryID,
 		FileName:     fileName,
 		VaultPath:    vaultPath,
-		ExportMethod: "telegram_document",
+		ExportMethod: exportMethod,
 		ContentHash:  hash,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &Result{Export: *created, Path: path, Content: content}, nil
+}
+
+func (s *Service) writeRESTNote(ctx context.Context, vaultPath string, content []byte) error {
+	existing, err := s.rest.ReadNote(ctx, vaultPath)
+	if err != nil && !errors.Is(err, ErrNoteNotFound) {
+		return err
+	}
+	if err == nil && len(existing) > 0 {
+		backupPath := backupVaultPath(vaultPath, s.now())
+		if err := s.rest.WriteNote(ctx, backupPath, existing); err != nil {
+			return fmt.Errorf("create obsidian backup: %w", err)
+		}
+	}
+	if err := s.rest.WriteNote(ctx, vaultPath, content); err != nil {
+		return fmt.Errorf("write obsidian note: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) ownerUser(ctx context.Context, telegramUserID int64) (*domain.User, error) {
@@ -244,6 +280,15 @@ func safePathSegment(value string) string {
 		return "Telegram"
 	}
 	return value
+}
+
+func backupVaultPath(vaultPath string, now time.Time) string {
+	ext := filepath.Ext(vaultPath)
+	base := strings.TrimSuffix(vaultPath, ext)
+	if ext == "" {
+		ext = ".md"
+	}
+	return fmt.Sprintf("%s.backup-%s%s", base, now.Format("20060102-150405"), ext)
 }
 
 func writeYAMLString(b *strings.Builder, key, value string) {

@@ -100,6 +100,17 @@ func main() {
 		summaryRepo,
 		postgres.NewObsidianExportRepository(db),
 	)
+	if cfg.ObsidianAPIKey != "" {
+		exportService = obsidian.NewServiceWithREST(
+			cfg.TelegramOwnerID,
+			cfg.ExportDir,
+			userRepo,
+			postgres.NewArticleRepository(db),
+			summaryRepo,
+			postgres.NewObsidianExportRepository(db),
+			obsidian.NewRESTClient(cfg.ObsidianRESTURL, cfg.ObsidianAPIKey, cfg.ObsidianInsecure),
+		)
+	}
 
 	server := httpserver.NewWithExports(cfg.HTTPAddr, db, logger, authService, syncService, groupService, collectionService, summaryService, summaryBrowser, articleService, exportService)
 	errCh := make(chan error, 1)

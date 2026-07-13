@@ -22,6 +22,9 @@ type Config struct {
 	LLMModel         string
 	EncryptionKey    string
 	ExportDir        string
+	ObsidianRESTURL  string
+	ObsidianAPIKey   string
+	ObsidianInsecure bool
 }
 
 func Load() (Config, error) {
@@ -38,10 +41,16 @@ func Load() (Config, error) {
 		LLMModel:         os.Getenv("LLM_MODEL"),
 		EncryptionKey:    os.Getenv("ENCRYPTION_KEY"),
 		ExportDir:        getEnv("EXPORT_DIR", "./data/exports"),
+		ObsidianRESTURL:  os.Getenv("OBSIDIAN_REST_URL"),
+		ObsidianAPIKey:   os.Getenv("OBSIDIAN_API_KEY"),
 	}
 
 	var err error
 	cfg.TelegramOwnerID, err = parseInt64Env("TELEGRAM_OWNER_ID", 0)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ObsidianInsecure, err = parseBoolEnv("OBSIDIAN_INSECURE_SKIP_VERIFY", false)
 	if err != nil {
 		return Config{}, err
 	}
@@ -57,6 +66,18 @@ func Load() (Config, error) {
 		return Config{}, errors.New("DATABASE_URL must not be empty")
 	}
 	return cfg, nil
+}
+
+func parseBoolEnv(key string, fallback bool) (bool, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("parse %s: %w", key, err)
+	}
+	return parsed, nil
 }
 
 func getEnv(key, fallback string) string {

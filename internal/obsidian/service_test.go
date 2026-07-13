@@ -71,6 +71,36 @@ func TestExportArticleWritesFileAndReusesHash(t *testing.T) {
 	}
 }
 
+func TestExportArticleWritesRESTBackupBeforeUpdate(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	created := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	article := &domain.Article{
+		ID:              7,
+		UserID:          1,
+		Title:           "Go Guide",
+		Slug:            "go-guide",
+		Status:          domain.ArticleStatusDraft,
+		ContentMarkdown: "# Go Guide",
+		CreatedAt:       created,
+		UpdatedAt:       created,
+	}
+	exports := &fakeExports{}
+	mock := &fakeREST{existing: []byte("# Old")}
+	service := NewServiceWithREST(42, dir, &fakeUsers{user: &domain.User{ID: 1, TelegramUserID: 42}}, &fakeArticles{article: article}, nil, exports, mock)
+
+	result, err := service.ExportArticle(ctx, 42, 7)
+	if err != nil {
+		t.Fatalf("ExportArticle() error = %v", err)
+	}
+	if result.Export.ExportMethod != "obsidian_rest" {
+		t.Fatalf("export method = %q", result.Export.ExportMethod)
+	}
+	if len(mock.writes) != 2 || !strings.Contains(mock.writes[0].path, ".backup-") || mock.writes[1].path != result.Export.VaultPath {
+		t.Fatalf("writes = %+v", mock.writes)
+	}
+}
+
 type fakeUsers struct{ user *domain.User }
 
 func (f *fakeUsers) UpsertByTelegramID(context.Context, int64) (*domain.User, error) {
@@ -111,6 +141,30 @@ func (f *fakeArticles) Update(context.Context, domain.Article) (*domain.Article,
 type fakeExports struct {
 	byHash map[string]*domain.ObsidianExport
 	nextID int64
+}
+
+type fakeREST struct {
+	existing []byte
+	writes   []restWrite
+}
+
+func (f *fakeREST) Enabled() bool { return true }
+
+type restWrite struct {
+	path    string
+	content string
+}
+
+func (f *fakeREST) ReadNote(context.Context, string) ([]byte, error) {
+	if f.existing == nil {
+		return nil, ErrNoteNotFound
+	}
+	return f.existing, nil
+}
+
+func (f *fakeREST) WriteNote(_ context.Context, path string, content []byte) error {
+	f.writes = append(f.writes, restWrite{path: path, content: string(content)})
+	return nil
 }
 
 func (f *fakeExports) Create(_ context.Context, export domain.ObsidianExport) (*domain.ObsidianExport, error) {

@@ -108,6 +108,17 @@ func main() {
 		summaryRepo,
 		postgres.NewObsidianExportRepository(db),
 	)
+	if cfg.ObsidianAPIKey != "" {
+		exportService = obsidian.NewServiceWithREST(
+			cfg.TelegramOwnerID,
+			cfg.ExportDir,
+			userRepo,
+			postgres.NewArticleRepository(db),
+			summaryRepo,
+			postgres.NewObsidianExportRepository(db),
+			obsidian.NewRESTClient(cfg.ObsidianRESTURL, cfg.ObsidianAPIKey, cfg.ObsidianInsecure),
+		)
+	}
 
 	service, err := tgbot.NewServiceWithExports(cfg.TelegramBotToken, cfg.TelegramOwnerID, authService, syncService, groupService, collectionService, summaryService, summaryBrowser, articleService, exportService, logger)
 	if err != nil {

@@ -40,6 +40,20 @@ func TestLoadParsesNumbers(t *testing.T) {
 	}
 }
 
+func TestLoadParsesObsidianRESTConfig(t *testing.T) {
+	t.Setenv("OBSIDIAN_REST_URL", "https://127.0.0.1:27124")
+	t.Setenv("OBSIDIAN_API_KEY", "secret")
+	t.Setenv("OBSIDIAN_INSECURE_SKIP_VERIFY", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ObsidianRESTURL != "https://127.0.0.1:27124" || cfg.ObsidianAPIKey != "secret" || !cfg.ObsidianInsecure {
+		t.Fatalf("obsidian config = %+v", cfg)
+	}
+}
+
 func TestLoadRejectsInvalidNumbers(t *testing.T) {
 	t.Setenv("TELEGRAM_OWNER_ID", "not-a-number")
 
