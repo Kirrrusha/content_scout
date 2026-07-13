@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
+	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
@@ -223,6 +224,58 @@ func TestRouterDialogSubmitsCode(t *testing.T) {
 	}
 }
 
+func TestRouterSourceGroupCommands(t *testing.T) {
+	ctx := context.Background()
+	groups := &fakeGroupController{
+		created: &domain.SourceGroup{ID: 1, Name: "Golang"},
+		withChats: &sourcegroups.GroupWithChats{
+			Group: domain.SourceGroup{ID: 1, Name: "Golang"},
+			Links: []domain.SourceGroupChat{{GroupID: 1, ChatID: 10, Priority: 3, Enabled: true}},
+			Chats: []domain.TelegramChat{{ID: 10, Title: "Backend", Type: domain.ChatTypeChannel}},
+		},
+	}
+	router := NewRouterWithAllControllers(42, NewMemoryStateStore(), nil, nil, groups)
+
+	out, err := router.Handle(ctx, Incoming{
+		Kind:   IncomingMessage,
+		UserID: 42,
+		ChatID: 100,
+		Text:   "/group_create Golang",
+	})
+	if err != nil {
+		t.Fatalf("Handle(group_create) error = %v", err)
+	}
+	if groups.createdName != "Golang" || !strings.Contains(out.Text, "Группа создана") {
+		t.Fatalf("createdName=%q output=%q", groups.createdName, out.Text)
+	}
+
+	out, err = router.Handle(ctx, Incoming{
+		Kind:   IncomingMessage,
+		UserID: 42,
+		ChatID: 100,
+		Text:   "/group_add_chat 1 10 3",
+	})
+	if err != nil {
+		t.Fatalf("Handle(group_add_chat) error = %v", err)
+	}
+	if groups.addedGroupID != 1 || groups.addedChatID != 10 || groups.addedPriority != 3 {
+		t.Fatalf("added group=%d chat=%d priority=%d", groups.addedGroupID, groups.addedChatID, groups.addedPriority)
+	}
+
+	out, err = router.Handle(ctx, Incoming{
+		Kind:   IncomingMessage,
+		UserID: 42,
+		ChatID: 100,
+		Text:   "/group_chats 1",
+	})
+	if err != nil {
+		t.Fatalf("Handle(group_chats) error = %v", err)
+	}
+	if !strings.Contains(out.Text, "Backend") {
+		t.Fatalf("group chats output = %q", out.Text)
+	}
+}
+
 type fakeAuthController struct {
 	started     bool
 	deleted     bool
@@ -281,4 +334,49 @@ func (f *fakeSyncController) ListFolders(context.Context, int64) ([]domain.Teleg
 
 func (f *fakeSyncController) ListChats(context.Context, int64) ([]domain.TelegramChat, error) {
 	return f.chats, nil
+}
+
+type fakeGroupController struct {
+	created       *domain.SourceGroup
+	groups        []domain.SourceGroup
+	withChats     *sourcegroups.GroupWithChats
+	createdName   string
+	addedGroupID  int64
+	addedChatID   int64
+	addedPriority int
+}
+
+func (f *fakeGroupController) Create(_ context.Context, _ int64, name, _ string) (*domain.SourceGroup, error) {
+	f.createdName = name
+	if f.created != nil {
+		return f.created, nil
+	}
+	return &domain.SourceGroup{ID: 1, Name: name}, nil
+}
+
+func (f *fakeGroupController) Update(_ context.Context, _ int64, groupID int64, name, _ string) (*domain.SourceGroup, error) {
+	return &domain.SourceGroup{ID: groupID, Name: name}, nil
+}
+
+func (f *fakeGroupController) Delete(context.Context, int64, int64) error {
+	return nil
+}
+
+func (f *fakeGroupController) List(context.Context, int64) ([]domain.SourceGroup, error) {
+	return f.groups, nil
+}
+
+func (f *fakeGroupController) AddChat(_ context.Context, _ int64, groupID, chatID int64, priority int, _ bool) error {
+	f.addedGroupID = groupID
+	f.addedChatID = chatID
+	f.addedPriority = priority
+	return nil
+}
+
+func (f *fakeGroupController) RemoveChat(context.Context, int64, int64, int64) error {
+	return nil
+}
+
+func (f *fakeGroupController) ListChats(context.Context, int64, int64) (*sourcegroups.GroupWithChats, error) {
+	return f.withChats, nil
 }

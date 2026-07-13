@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
@@ -27,6 +28,7 @@ type Router struct {
 	states  StateStore
 	auth    AuthController
 	sync    SyncController
+	groups  GroupController
 }
 
 func NewRouter(ownerID int64, states StateStore) *Router {
@@ -39,6 +41,10 @@ func NewRouterWithAuth(ownerID int64, states StateStore, auth AuthController) *R
 
 func NewRouterWithControllers(ownerID int64, states StateStore, auth AuthController, sync SyncController) *Router {
 	return &Router{ownerID: ownerID, states: states, auth: auth, sync: sync}
+}
+
+func NewRouterWithAllControllers(ownerID int64, states StateStore, auth AuthController, sync SyncController, groups GroupController) *Router {
+	return &Router{ownerID: ownerID, states: states, auth: auth, sync: sync, groups: groups}
 }
 
 func (r *Router) Handle(ctx context.Context, in Incoming) (Outgoing, error) {
@@ -85,6 +91,20 @@ func (r *Router) handleMessage(ctx context.Context, in Incoming) (Outgoing, erro
 		return r.showChats(ctx, in.ChatID, in.UserID, 0, "")
 	case "sync":
 		return r.syncTelegram(ctx, in.ChatID, in.UserID, 0, "")
+	case "groups":
+		return r.showGroups(ctx, in.ChatID, in.UserID, 0, "")
+	case "group_create":
+		return r.createGroup(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_create")))
+	case "group_rename":
+		return r.renameGroup(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_rename")))
+	case "group_delete":
+		return r.deleteGroup(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_delete")))
+	case "group_add_chat":
+		return r.addGroupChat(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_add_chat")))
+	case "group_remove_chat":
+		return r.removeGroupChat(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_remove_chat")))
+	case "group_chats":
+		return r.showGroupChats(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_chats")))
 	case "settings":
 		return r.showSettings(ctx, in.ChatID, in.UserID, 0, "")
 	default:
@@ -106,7 +126,7 @@ func (r *Router) handleCallback(ctx context.Context, in Incoming) (Outgoing, err
 	case ActionFolders:
 		out, err = r.showFolders(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Раздел папок открыт.")
 	case ActionGroups:
-		out, err = r.showPlaceholder(ctx, in.ChatID, in.UserID, ViewGroups, "Управление группами источников появится после синхронизации папок и чатов.", in.CallbackMessage, "Раздел групп открыт.")
+		out, err = r.showGroups(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Раздел групп открыт.")
 	case ActionSelectedSources:
 		out, err = r.showChats(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Раздел источников открыт.")
 	case ActionHistory:
@@ -358,4 +378,132 @@ func (r *Router) showChats(ctx context.Context, chatID, userID int64, editMessag
 		return Outgoing{}, fmt.Errorf("set dialog state: %w", err)
 	}
 	return Outgoing{ChatID: chatID, Text: chatsText(chats), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+}
+
+func (r *Router) showGroups(ctx context.Context, chatID, userID int64, editMessageID int, callbackAnswer string) (Outgoing, error) {
+	if r.groups == nil {
+		return Outgoing{ChatID: chatID, Text: "Группы источников пока не настроены.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	}
+	groups, err := r.groups.List(ctx, userID)
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	}
+	if err := r.states.Set(ctx, userID, DialogState{View: ViewGroups}); err != nil {
+		return Outgoing{}, fmt.Errorf("set dialog state: %w", err)
+	}
+	return Outgoing{ChatID: chatID, Text: groupsText(groups), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+}
+
+func (r *Router) createGroup(ctx context.Context, chatID, userID int64, raw string) (Outgoing, error) {
+	if r.groups == nil {
+		return Outgoing{ChatID: chatID, Text: "Группы источников пока не настроены.", Menu: BackMenu()}, nil
+	}
+	if raw == "" {
+		return Outgoing{ChatID: chatID, Text: "Использование: /group_create <name>", Menu: BackMenu()}, nil
+	}
+	group, err := r.groups.Create(ctx, userID, raw, "")
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu()}, nil
+	}
+	return Outgoing{ChatID: chatID, Text: fmt.Sprintf("Группа создана: %d. %s", group.ID, group.Name), Menu: BackMenu()}, nil
+}
+
+func (r *Router) renameGroup(ctx context.Context, chatID, userID int64, raw string) (Outgoing, error) {
+	if r.groups == nil {
+		return Outgoing{ChatID: chatID, Text: "Группы источников пока не настроены.", Menu: BackMenu()}, nil
+	}
+	parts := strings.Fields(raw)
+	if len(parts) < 2 {
+		return Outgoing{ChatID: chatID, Text: "Использование: /group_rename <id> <name>", Menu: BackMenu()}, nil
+	}
+	groupID, err := parseID(parts[0])
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: "Некорректный ID группы.", Menu: BackMenu()}, nil
+	}
+	group, err := r.groups.Update(ctx, userID, groupID, strings.Join(parts[1:], " "), "")
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu()}, nil
+	}
+	return Outgoing{ChatID: chatID, Text: fmt.Sprintf("Группа переименована: %d. %s", group.ID, group.Name), Menu: BackMenu()}, nil
+}
+
+func (r *Router) deleteGroup(ctx context.Context, chatID, userID int64, raw string) (Outgoing, error) {
+	if r.groups == nil {
+		return Outgoing{ChatID: chatID, Text: "Группы источников пока не настроены.", Menu: BackMenu()}, nil
+	}
+	groupID, err := parseID(strings.TrimSpace(raw))
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: "Использование: /group_delete <id>", Menu: BackMenu()}, nil
+	}
+	if err := r.groups.Delete(ctx, userID, groupID); err != nil {
+		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu()}, nil
+	}
+	return Outgoing{ChatID: chatID, Text: "Группа удалена.", Menu: BackMenu()}, nil
+}
+
+func (r *Router) addGroupChat(ctx context.Context, chatID, userID int64, raw string) (Outgoing, error) {
+	if r.groups == nil {
+		return Outgoing{ChatID: chatID, Text: "Группы источников пока не настроены.", Menu: BackMenu()}, nil
+	}
+	parts := strings.Fields(raw)
+	if len(parts) < 2 {
+		return Outgoing{ChatID: chatID, Text: "Использование: /group_add_chat <group_id> <chat_id> [priority]", Menu: BackMenu()}, nil
+	}
+	groupID, err := parseID(parts[0])
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: "Некорректный ID группы.", Menu: BackMenu()}, nil
+	}
+	sourceChatID, err := parseID(parts[1])
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: "Некорректный ID чата.", Menu: BackMenu()}, nil
+	}
+	priority := 0
+	if len(parts) > 2 {
+		parsed, err := strconv.Atoi(parts[2])
+		if err != nil {
+			return Outgoing{ChatID: chatID, Text: "Некорректный priority.", Menu: BackMenu()}, nil
+		}
+		priority = parsed
+	}
+	if err := r.groups.AddChat(ctx, userID, groupID, sourceChatID, priority, true); err != nil {
+		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu()}, nil
+	}
+	return Outgoing{ChatID: chatID, Text: "Источник добавлен в группу.", Menu: BackMenu()}, nil
+}
+
+func (r *Router) removeGroupChat(ctx context.Context, chatID, userID int64, raw string) (Outgoing, error) {
+	if r.groups == nil {
+		return Outgoing{ChatID: chatID, Text: "Группы источников пока не настроены.", Menu: BackMenu()}, nil
+	}
+	parts := strings.Fields(raw)
+	if len(parts) != 2 {
+		return Outgoing{ChatID: chatID, Text: "Использование: /group_remove_chat <group_id> <chat_id>", Menu: BackMenu()}, nil
+	}
+	groupID, err := parseID(parts[0])
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: "Некорректный ID группы.", Menu: BackMenu()}, nil
+	}
+	sourceChatID, err := parseID(parts[1])
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: "Некорректный ID чата.", Menu: BackMenu()}, nil
+	}
+	if err := r.groups.RemoveChat(ctx, userID, groupID, sourceChatID); err != nil {
+		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu()}, nil
+	}
+	return Outgoing{ChatID: chatID, Text: "Источник удален из группы.", Menu: BackMenu()}, nil
+}
+
+func (r *Router) showGroupChats(ctx context.Context, chatID, userID int64, raw string) (Outgoing, error) {
+	if r.groups == nil {
+		return Outgoing{ChatID: chatID, Text: "Группы источников пока не настроены.", Menu: BackMenu()}, nil
+	}
+	groupID, err := parseID(strings.TrimSpace(raw))
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: "Использование: /group_chats <id>", Menu: BackMenu()}, nil
+	}
+	group, err := r.groups.ListChats(ctx, userID, groupID)
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu()}, nil
+	}
+	return Outgoing{ChatID: chatID, Text: groupChatsText(group), Menu: BackMenu()}, nil
 }

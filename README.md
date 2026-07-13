@@ -4,7 +4,7 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-005 Telegram folders and chats`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, and folder/chat sync pipeline.
+This repository is currently at `PR-006 Source groups`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, and user-defined source groups.
 
 ## Architecture
 
@@ -17,6 +17,7 @@ This repository is currently at `PR-005 Telegram folders and chats`: project str
 - `internal/domain`: core entities and enums.
 - `internal/storage`: repository interfaces.
 - `internal/storage/postgres`: PostgreSQL connection, migrations, repository implementations.
+- `internal/sourcegroups`: source group use cases and ownership validation.
 - `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, cached folder/chat views, and in-memory dialog state.
 - `internal/telegram/tdlib`: TDLib client interface, authorization state machine, session persistence, folder/chat sync service, and unavailable native adapter placeholder.
 - `migrations`: reversible SQL migrations.
@@ -68,6 +69,13 @@ Bot commands currently available:
 /folders
 /chats
 /sync
+/groups
+/group_create <name>
+/group_rename <id> <name>
+/group_delete <id>
+/group_chats <id>
+/group_add_chat <group_id> <chat_id> [priority]
+/group_remove_chat <group_id> <chat_id>
 /settings
 ```
 
@@ -95,6 +103,20 @@ GET    /telegram/chats?telegram_user_id=...
 ```
 
 `POST /telegram/sync` uses `{"telegram_user_id": ...}`. Private chats are excluded from persistence by default. Cached chat responses include title, type, unread count, mute/archive flags, and last message id.
+
+Internal source group endpoints:
+
+```text
+GET    /groups?telegram_user_id=...
+POST   /groups
+PATCH  /groups/{id}
+DELETE /groups/{id}
+GET    /groups/{id}/chats?telegram_user_id=...
+POST   /groups/{id}/chats
+DELETE /groups/{id}/chats/{chatId}
+```
+
+Group create/update bodies use `telegram_user_id`, `name`, and optional `description`. Adding a chat uses `telegram_user_id`, `chat_id`, optional `priority`, and optional `enabled`.
 
 ## Docker
 
@@ -144,4 +166,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-`PR-006 — Source groups` should add CRUD for user-defined source groups, adding/removing synced chats, importing from available Telegram folders once the native adapter exposes folder membership, and bot navigation for groups.
+`PR-007 — Message collection` should add chat history collection, date ranges, last summarized positions, collection jobs, and tests that ensure read positions are not advanced before a successful summary.

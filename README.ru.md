@@ -4,7 +4,7 @@
 
 Персональный сервис для сводок из Telegram с экспортом Markdown-файлов в Obsidian.
 
-Текущее состояние репозитория: `PR-005 Telegram folders and chats`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib и pipeline синхронизации папок/чатов.
+Текущее состояние репозитория: `PR-006 Source groups`. Уже есть структура проекта, конфигурация, HTTP health checks, подключение PostgreSQL, миграции, Docker Compose, доменные сущности, repository interfaces, PostgreSQL repositories, shell Telegram-бота, state machine авторизации TDLib, pipeline синхронизации папок/чатов и пользовательские группы источников.
 
 ## Архитектура
 
@@ -15,6 +15,7 @@
 - `cmd/summary-worker`: placeholder фонового summary worker для следующих PR.
 - `internal/config`: конфигурация через переменные окружения.
 - `internal/domain`: доменные сущности и enum'ы.
+- `internal/sourcegroups`: сценарии source groups и проверка владения.
 - `internal/storage`: repository interfaces.
 - `internal/storage/postgres`: PostgreSQL connection, миграции и реализации repositories.
 - `internal/telegram/bot`: Telegram Bot API polling, owner guard, меню, callback routing, просмотр кэша папок/чатов и in-memory dialog state.
@@ -68,6 +69,13 @@ make docker-down
 /folders
 /chats
 /sync
+/groups
+/group_create <name>
+/group_rename <id> <name>
+/group_delete <id>
+/group_chats <id>
+/group_add_chat <group_id> <chat_id> [priority]
+/group_remove_chat <group_id> <chat_id>
 /settings
 ```
 
@@ -95,6 +103,20 @@ GET    /telegram/chats?telegram_user_id=...
 ```
 
 `POST /telegram/sync` принимает `{"telegram_user_id": ...}`. Личные чаты по умолчанию не сохраняются. Ответы с кэшированными чатами содержат название, тип, unread count, mute/archive flags и last message id.
+
+Внутренние endpoints групп источников:
+
+```text
+GET    /groups?telegram_user_id=...
+POST   /groups
+PATCH  /groups/{id}
+DELETE /groups/{id}
+GET    /groups/{id}/chats?telegram_user_id=...
+POST   /groups/{id}/chats
+DELETE /groups/{id}/chats/{chatId}
+```
+
+Create/update группы используют `telegram_user_id`, `name` и опциональный `description`. Добавление чата использует `telegram_user_id`, `chat_id`, опциональный `priority` и опциональный `enabled`.
 
 ## Docker
 
@@ -144,4 +166,4 @@ go test ./internal/storage/postgres
 
 ## Следующий PR
 
-`PR-006 — Source groups`: CRUD пользовательских групп источников, добавление/удаление синхронизированных чатов, импорт из Telegram-папок после появления folder membership в native adapter и навигация по группам в боте.
+`PR-007 — Message collection`: сбор истории чатов, диапазоны дат, last summarized positions, collection jobs и тесты, что read position не сдвигается до успешного summary.

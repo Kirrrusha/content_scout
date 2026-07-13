@@ -10,6 +10,7 @@ import (
 
 	"github.com/kirilllebedenko/content_scout/internal/app/httpserver"
 	"github.com/kirilllebedenko/content_scout/internal/config"
+	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/storage/postgres"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
@@ -50,8 +51,14 @@ func main() {
 		postgres.NewTelegramChatRepository(db),
 		factory,
 	)
+	groupService := sourcegroups.NewService(
+		cfg.TelegramOwnerID,
+		userRepo,
+		postgres.NewSourceGroupRepository(db),
+		postgres.NewTelegramChatRepository(db),
+	)
 
-	server := httpserver.NewWithControllers(cfg.HTTPAddr, db, logger, authService, syncService)
+	server := httpserver.NewWithAllControllers(cfg.HTTPAddr, db, logger, authService, syncService, groupService)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Run()

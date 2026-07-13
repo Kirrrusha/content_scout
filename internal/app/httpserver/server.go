@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
+	"github.com/kirilllebedenko/content_scout/internal/sourcegroups"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
@@ -20,6 +21,7 @@ type Server struct {
 	logger     *slog.Logger
 	auth       AuthController
 	sync       SyncController
+	groups     GroupController
 }
 
 type AuthController interface {
@@ -37,6 +39,16 @@ type SyncController interface {
 	ListChats(ctx context.Context, telegramUserID int64) ([]domain.TelegramChat, error)
 }
 
+type GroupController interface {
+	Create(ctx context.Context, telegramUserID int64, name, description string) (*domain.SourceGroup, error)
+	Update(ctx context.Context, telegramUserID, groupID int64, name, description string) (*domain.SourceGroup, error)
+	Delete(ctx context.Context, telegramUserID, groupID int64) error
+	List(ctx context.Context, telegramUserID int64) ([]domain.SourceGroup, error)
+	AddChat(ctx context.Context, telegramUserID, groupID, chatID int64, priority int, enabled bool) error
+	RemoveChat(ctx context.Context, telegramUserID, groupID, chatID int64) error
+	ListChats(ctx context.Context, telegramUserID, groupID int64) (*sourcegroups.GroupWithChats, error)
+}
+
 func New(addr string, db *sql.DB, logger *slog.Logger) *Server {
 	return NewWithAuth(addr, db, logger, nil)
 }
@@ -46,11 +58,16 @@ func NewWithAuth(addr string, db *sql.DB, logger *slog.Logger, auth AuthControll
 }
 
 func NewWithControllers(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController) *Server {
+	return NewWithAllControllers(addr, db, logger, auth, sync, nil)
+}
+
+func NewWithAllControllers(addr string, db *sql.DB, logger *slog.Logger, auth AuthController, sync SyncController, groups GroupController) *Server {
 	server := &Server{
 		db:     db,
 		logger: logger,
 		auth:   auth,
 		sync:   sync,
+		groups: groups,
 	}
 
 	mux := http.NewServeMux()
@@ -65,6 +82,13 @@ func NewWithControllers(addr string, db *sql.DB, logger *slog.Logger, auth AuthC
 	mux.HandleFunc("POST /telegram/sync", server.telegramSync)
 	mux.HandleFunc("GET /telegram/folders", server.telegramFolders)
 	mux.HandleFunc("GET /telegram/chats", server.telegramChats)
+	mux.HandleFunc("GET /groups", server.groupsList)
+	mux.HandleFunc("POST /groups", server.groupsCreate)
+	mux.HandleFunc("PATCH /groups/{id}", server.groupsUpdate)
+	mux.HandleFunc("DELETE /groups/{id}", server.groupsDelete)
+	mux.HandleFunc("GET /groups/{id}/chats", server.groupChatsList)
+	mux.HandleFunc("POST /groups/{id}/chats", server.groupChatsAdd)
+	mux.HandleFunc("DELETE /groups/{id}/chats/{chatId}", server.groupChatsRemove)
 
 	server.httpServer = &http.Server{
 		Addr:              addr,
