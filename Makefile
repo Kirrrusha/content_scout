@@ -1,13 +1,22 @@
 GO ?= go
 DOCKER_COMPOSE ?= docker compose
 
-.PHONY: build test lint migrate-up migrate-down run-api run-bot run-tdlib run-worker docker-up docker-down
+.PHONY: build build-tdlib test test-tdlib-nocgo test-tdlib-integration lint migrate-up migrate-down run-api run-bot run-tdlib run-worker docker-up docker-down
 
 build:
 	$(GO) build ./cmd/...
 
+build-tdlib:
+	CGO_ENABLED=1 $(GO) build -tags tdlib ./cmd/api ./cmd/bot ./cmd/tdlib-worker
+
 test:
 	$(GO) test ./...
+
+test-tdlib-nocgo:
+	CGO_ENABLED=0 $(GO) test -tags tdlib ./internal/telegram/tdlib
+
+test-tdlib-integration:
+	CGO_ENABLED=1 $(GO) test -tags 'tdlib integration' ./internal/telegram/tdlib
 
 lint:
 	$(GO) vet ./...

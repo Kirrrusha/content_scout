@@ -1,12 +1,41 @@
-FROM golang:1.25-alpine AS build
+FROM debian:bookworm-slim AS tdlib
+ARG TDLIB_GIT_REF=master
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        git \
+        gperf \
+        libssl-dev \
+        zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "${TDLIB_GIT_REF}" https://github.com/tdlib/td.git /td
+RUN cmake -S /td -B /td/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DTD_ENABLE_JNI=OFF \
+    && cmake --build /td/build --target install -j"$(nproc)"
+
+FROM golang:1.25-bookworm AS build
 WORKDIR /src
+COPY --from=tdlib /usr/local /usr/local
+RUN ldconfig
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/bot ./cmd/bot
+RUN CGO_ENABLED=1 GOOS=linux go build -tags tdlib -o /out/bot ./cmd/bot
 
-FROM alpine:3.22
-RUN addgroup -S app && adduser -S app -G app
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 libstdc++6 zlib1g \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system app \
+    && useradd --system --gid app --home-dir /nonexistent --shell /usr/sbin/nologin app \
+    && mkdir -p /data/tdlib /data/exports \
+    && chown -R app:app /data
+COPY --from=tdlib /usr/local/lib /usr/local/lib
+RUN ldconfig
 USER app
 COPY --from=build /out/bot /usr/local/bin/bot
 ENTRYPOINT ["/usr/local/bin/bot"]

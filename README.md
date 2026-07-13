@@ -4,14 +4,14 @@
 
 Personal Telegram summary service with Markdown export for Obsidian.
 
-This repository is currently at `PR-014 Obsidian REST integration`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, LLM summary generation, summary history browsing, article draft conversion, Markdown export for Obsidian, scheduled summary runs, and optional Obsidian Local REST API note writes.
+This repository is currently at `PR-015 Native TDLib Adapter`: project structure, configuration, HTTP health checks, PostgreSQL connection, migrations, Docker Compose, domain entities, repository interfaces, PostgreSQL repositories, Telegram bot shell, native TDLib JSON adapter, TDLib authorization state machine, folder/chat sync pipeline, user-defined source groups, message collection jobs, filtering, duplicate clustering, LLM summary generation, summary history browsing, article draft conversion, Markdown export for Obsidian, scheduled summary runs, and optional Obsidian Local REST API note writes.
 
 ## Architecture
 
 - `cmd/api`: internal HTTP API. Exposes `/health` and `/ready`.
 - `cmd/migrate`: lightweight SQL migration runner.
 - `cmd/bot`: Telegram Bot process with owner-only shell navigation.
-- `cmd/tdlib-worker`: TDLib worker shell.
+- `cmd/tdlib-worker`: TDLib worker entrypoint.
 - `cmd/summary-worker`: background summary worker placeholder for later PRs.
 - `internal/collection`: message collection use cases for source groups.
 - `internal/config`: environment-based configuration.
@@ -28,10 +28,10 @@ This repository is currently at `PR-014 Obsidian REST integration`: project stru
 - `internal/obsidian`: Markdown rendering, YAML frontmatter, safe filenames, SHA-256 deduplication, export file persistence, and optional Obsidian Local REST API create/update with backups.
 - `internal/scheduler`: enabled schedule polling, timezone-aware daily due checks, quiet hours, and collection -> summary -> optional export orchestration.
 - `internal/telegram/bot`: Telegram Bot API polling, owner guard, menu routing, callback routing, cached folder/chat views, summary history UI, topic cards, article draft actions, and in-memory dialog state.
-- `internal/telegram/tdlib`: TDLib client interface, authorization state machine, session persistence, folder/chat sync service, and unavailable native adapter placeholder.
+- `internal/telegram/tdlib`: TDLib client interface, optional native `tdjson` adapter, authorization state machine, session persistence, folder/chat sync service, chat/message mapping, and unavailable fallback for non-TDLib builds.
 - `migrations`: reversible SQL migrations.
 
-The native TDLib adapter is intentionally not connected yet. Authorization and folder/chat sync logic are implemented behind interfaces and covered with fake clients, so the real adapter can be added without changing bot/API flows.
+The native TDLib adapter is enabled in Docker builds and in local builds compiled with `-tags tdlib` and CGO. Plain local builds keep using the unavailable fallback, so unit tests and non-TDLib development do not require `libtdjson`.
 
 ## Configuration
 
@@ -51,7 +51,10 @@ export DATABASE_URL='postgres://postgres:postgres@localhost:5432/telegram_summar
 
 ```sh
 make build
+make build-tdlib
 make test
+make test-tdlib-nocgo
+make test-tdlib-integration
 make lint
 make migrate-up
 make migrate-down
@@ -103,6 +106,21 @@ Bot commands currently available:
 ```
 
 Authorization inputs are routed through the TDLib state machine. Phone numbers, confirmation codes, and 2FA passwords are not logged or stored by the application.
+
+Native TDLib local builds require `libtdjson` to be installed and discoverable by the system linker:
+
+```sh
+CGO_ENABLED=1 go build -tags tdlib ./cmd/api ./cmd/bot ./cmd/tdlib-worker
+```
+
+The optional native integration test is intentionally separate from unit tests:
+
+```sh
+export TELEGRAM_API_ID=123
+export TELEGRAM_API_HASH=...
+export TDLIB_INTEGRATION_SESSION_DIR=./data/tdlib-integration
+make test-tdlib-integration
+```
 
 Internal authorization endpoints:
 
@@ -224,6 +242,8 @@ Scheduled summaries are stored in `summary_schedules` and executed by `cmd/summa
 make docker-up
 ```
 
+The `api`, `bot`, and `tdlib-worker` Docker images build TDLib from the official `tdlib/td` repository and compile the Go binaries with `-tags tdlib`. You can pin the TDLib source revision with the `TDLIB_GIT_REF` build arg if needed.
+
 The API is available at:
 
 ```text
@@ -270,4 +290,4 @@ go test ./internal/storage/postgres
 
 ## Next PR
 
-The planned PR sequence from the initial roadmap is complete through `PR-014`. A natural next step is hardening: native TDLib adapter, service-token auth for the internal API, and observability.
+The planned PR sequence from the initial roadmap is complete through `PR-015`. The next step is `PR-016 Secure Internal API`: service-token middleware, security headers, request body limits, and HTTP server timeouts.

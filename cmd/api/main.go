@@ -40,7 +40,10 @@ func main() {
 	}
 	defer db.Close()
 
-	factory := tdlib.UnavailableClientFactory{}
+	factory := tdlib.NewClientFactory(tdlib.ClientConfig{
+		APIID:   cfg.TelegramAPIID,
+		APIHash: cfg.TelegramAPIHash,
+	})
 	userRepo := postgres.NewUserRepository(db)
 	sessionRepo := postgres.NewTelegramSessionRepository(db)
 	authService := tdlib.NewAuthService(tdlib.AuthServiceConfig{
@@ -124,6 +127,10 @@ func main() {
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			logger.Error("api shutdown failed", "error", err)
+			os.Exit(1)
+		}
+		if err := tdlib.CloseClientFactory(shutdownCtx, factory); err != nil {
+			logger.Error("tdlib shutdown failed", "error", err)
 			os.Exit(1)
 		}
 	case err := <-errCh:

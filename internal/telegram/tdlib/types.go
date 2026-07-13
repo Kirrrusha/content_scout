@@ -40,3 +40,20 @@ type TelegramClient interface {
 type ClientFactory interface {
 	NewClient(sessionPath string) (TelegramClient, error)
 }
+
+type ClientFactoryCloser interface {
+	Close(context.Context) error
+}
+
+type ClientConfig struct {
+	APIID   int
+	APIHash string
+}
+
+func CloseClientFactory(ctx context.Context, factory ClientFactory) error {
+	closer, ok := factory.(ClientFactoryCloser)
+	if !ok {
+		return nil
+	}
+	return closer.Close(ctx)
+}

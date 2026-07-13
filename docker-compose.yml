@@ -30,6 +30,8 @@ services:
     build:
       context: .
       dockerfile: deployments/docker/api.Dockerfile
+      args:
+        TDLIB_GIT_REF: ${TDLIB_GIT_REF:-master}
     env_file: .env
     depends_on:
       postgres:
@@ -38,6 +40,9 @@ services:
         condition: service_completed_successfully
     ports:
       - "8080:8080"
+    volumes:
+      - tdlib_data:/data/tdlib
+      - exports:/data/exports
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
       interval: 10s
@@ -48,13 +53,20 @@ services:
     build:
       context: .
       dockerfile: deployments/docker/bot.Dockerfile
+      args:
+        TDLIB_GIT_REF: ${TDLIB_GIT_REF:-master}
     env_file: .env
     profiles: ["bot"]
+    volumes:
+      - tdlib_data:/data/tdlib
+      - exports:/data/exports
 
   tdlib-worker:
     build:
       context: .
       dockerfile: deployments/docker/tdlib-worker.Dockerfile
+      args:
+        TDLIB_GIT_REF: ${TDLIB_GIT_REF:-master}
     env_file: .env
     profiles: ["tdlib"]
     volumes:
