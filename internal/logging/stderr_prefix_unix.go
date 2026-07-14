@@ -36,7 +36,7 @@ func StartStderrTimestampPrefixer(now func() time.Time) (*StderrPrefixer, error)
 		_ = original.Close()
 		return nil, fmt.Errorf("create stderr pipe: %w", err)
 	}
-	if err := syscall.Dup2(int(writer.Fd()), int(os.Stderr.Fd())); err != nil {
+	if err := dup2(int(writer.Fd()), int(os.Stderr.Fd())); err != nil {
 		_ = reader.Close()
 		_ = writer.Close()
 		_ = original.Close()
@@ -58,7 +58,7 @@ func (p *StderrPrefixer) Close() error {
 		return nil
 	}
 	p.once.Do(func() {
-		if err := syscall.Dup2(int(p.original.Fd()), int(os.Stderr.Fd())); err != nil {
+		if err := dup2(int(p.original.Fd()), int(os.Stderr.Fd())); err != nil {
 			p.err = fmt.Errorf("restore stderr: %w", err)
 		}
 		<-p.done

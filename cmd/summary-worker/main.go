@@ -68,8 +68,9 @@ func main() {
 	defer func() { _ = db.Close() }()
 
 	factory := tdlib.NewClientFactory(tdlib.ClientConfig{
-		APIID:   cfg.TelegramAPIID,
-		APIHash: cfg.TelegramAPIHash,
+		APIID:    cfg.TelegramAPIID,
+		APIHash:  cfg.TelegramAPIHash,
+		ProxyURL: cfg.TelegramProxyURL,
 	})
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

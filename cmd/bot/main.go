@@ -105,7 +105,7 @@ func main() {
 	}
 
 	scheduleService := schedules.NewService(cfg.TelegramOwnerID, userRepo, postgres.NewSummaryScheduleRepository(db), postgres.NewJobRepository(db))
-	service, err := tgbot.NewServiceWithExports(cfg.TelegramBotToken, cfg.TelegramOwnerID, apiClient, apiClient, groupService, apiClient, apiClient, summaryBrowser, articleService, exportService, logger)
+	service, err := tgbot.NewServiceWithProxy(cfg.TelegramBotToken, cfg.TelegramProxyURL, cfg.TelegramOwnerID, apiClient, apiClient, groupService, apiClient, apiClient, summaryBrowser, articleService, exportService, logger)
 	if err != nil {
 		logger.Error("create bot service failed", "error", err)
 		os.Exit(1)

@@ -20,9 +20,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,6 +44,7 @@ type NativeClient struct {
 	rawAuthState string
 	folders      []domain.TelegramFolder
 	haveFolders  bool
+	proxySent    bool
 }
 
 func NewNativeClient(cfg ClientConfig, sessionPath string) *NativeClient {
@@ -285,6 +288,7 @@ func (c *NativeClient) ensureHandle() error {
 	}
 	c.authState = AuthorizationStateUnknown
 	c.rawAuthState = ""
+	c.proxySent = false
 	c.execute(map[string]any{
 		"@type":               "setLogVerbosityLevel",
 		"new_verbosity_level": 2,
@@ -293,6 +297,12 @@ func (c *NativeClient) ensureHandle() error {
 }
 
 func (c *NativeClient) advanceAuthorization(ctx context.Context) error {
+	if !c.proxySent {
+		if err := c.applyProxy(ctx); err != nil {
+			return err
+		}
+		c.proxySent = true
+	}
 	for {
 		rawState := c.rawAuthState
 		if rawState == "" {
@@ -399,6 +409,45 @@ func (c *NativeClient) getAuthorizationState(ctx context.Context) (Authorization
 	}
 	c.updateAuthorizationFrom(response)
 	return c.authState, nil
+}
+
+// applyProxy configures TDLib to route its MTProto traffic through a SOCKS5
+// proxy, needed when Telegram's servers are unreachable directly from the
+// deployment region. A no-op if ProxyURL is not configured.
+func (c *NativeClient) applyProxy(ctx context.Context) error {
+	if c.cfg.ProxyURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(c.cfg.ProxyURL)
+	if err != nil {
+		return fmt.Errorf("parse tdlib proxy url: %w", err)
+	}
+	if parsed.Scheme != "socks5" {
+		return fmt.Errorf("tdlib proxy url must use socks5 scheme, got %q", parsed.Scheme)
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return errors.New("tdlib proxy url is missing a host")
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil {
+		return fmt.Errorf("parse tdlib proxy port: %w", err)
+	}
+	proxyType := map[string]any{"@type": "proxyTypeSocks5"}
+	if username := parsed.User.Username(); username != "" {
+		proxyType["username"] = username
+		if password, ok := parsed.User.Password(); ok {
+			proxyType["password"] = password
+		}
+	}
+	_, err = c.sendAndWait(ctx, map[string]any{
+		"@type":  "addProxy",
+		"server": host,
+		"port":   port,
+		"enable": true,
+		"type":   proxyType,
+	})
+	return err
 }
 
 func (c *NativeClient) tdlibParameters() map[string]any {

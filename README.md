@@ -71,6 +71,7 @@ Authorization: Bearer <token>
 | `TELEGRAM_OWNER_ID` | yes for bot/API actions | `0` | Telegram user id allowed to control the bot and API flows. |
 | `TELEGRAM_API_ID` | yes for native TDLib | `0` | Telegram API id from my.telegram.org. |
 | `TELEGRAM_API_HASH` | yes for native TDLib | empty | Telegram API hash from my.telegram.org. |
+| `TELEGRAM_PROXY_URL` | no | empty | SOCKS5 proxy URL (`socks5://user:pass@host:port`) used by `cmd/bot` (Bot API) and the native TDLib client, for deployments where Telegram is unreachable directly. |
 | `TDLIB_DATABASE_DIR` | no | `./data/tdlib` locally, `/data/tdlib` in Docker | TDLib session/database directory. Persist this directory. |
 | `TDLIB_GIT_REF` | no | `master` | TDLib source branch/tag/commit used by Docker builds. |
 | `TDLIB_INTEGRATION_SESSION_DIR` | no | temp dir | Session directory for optional native TDLib integration tests. |

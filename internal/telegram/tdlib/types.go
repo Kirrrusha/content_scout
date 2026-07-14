@@ -53,6 +53,10 @@ type ClientFactoryCloser interface {
 type ClientConfig struct {
 	APIID   int
 	APIHash string
+	// ProxyURL, when set, routes TDLib's network traffic through a SOCKS5
+	// proxy (e.g. socks5://user:pass@host:port), needed when Telegram's
+	// MTProto servers are unreachable directly from the deployment region.
+	ProxyURL string
 }
 
 type TDLibError struct {

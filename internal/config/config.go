@@ -25,6 +25,7 @@ type Config struct {
 	TelegramOwnerID  int64
 	TelegramAPIID    int
 	TelegramAPIHash  string
+	TelegramProxyURL string
 	TDLibDatabaseDir string
 	LLMProvider      string
 	LLMBaseURL       string
@@ -51,6 +52,7 @@ func Load() (Config, error) {
 		WorkerID:         os.Getenv("WORKER_ID"),
 		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramAPIHash:  os.Getenv("TELEGRAM_API_HASH"),
+		TelegramProxyURL: os.Getenv("TELEGRAM_PROXY_URL"),
 		TDLibDatabaseDir: getEnv("TDLIB_DATABASE_DIR", "./data/tdlib"),
 		LLMProvider:      getEnv("LLM_PROVIDER", "openai"),
 		LLMBaseURL:       os.Getenv("LLM_BASE_URL"),

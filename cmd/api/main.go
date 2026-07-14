@@ -66,8 +66,9 @@ func main() {
 	defer func() { _ = db.Close() }()
 
 	factory := tdlib.NewClientFactory(tdlib.ClientConfig{
-		APIID:   cfg.TelegramAPIID,
-		APIHash: cfg.TelegramAPIHash,
+		APIID:    cfg.TelegramAPIID,
+		APIHash:  cfg.TelegramAPIHash,
+		ProxyURL: cfg.TelegramProxyURL,
 	})
 	userRepo := postgres.NewUserRepository(db)
 	sessionRepo := postgres.NewTelegramSessionRepository(db)

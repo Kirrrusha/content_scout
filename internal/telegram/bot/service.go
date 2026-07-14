@@ -51,10 +51,21 @@ func NewServiceWithArticle(token string, ownerID int64, auth AuthController, syn
 }
 
 func NewServiceWithExports(token string, ownerID int64, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summary SummaryController, browser SummaryBrowserController, articles ArticleController, exports ExportController, logger *slog.Logger) (*Service, error) {
+	return NewServiceWithProxy(token, "", ownerID, auth, sync, groups, collector, summary, browser, articles, exports, logger)
+}
+
+// NewServiceWithProxy is like NewServiceWithExports but routes Telegram Bot
+// API requests through proxyURL (e.g. socks5://user:pass@host:port) when set,
+// for deployments where api.telegram.org is unreachable directly.
+func NewServiceWithProxy(token, proxyURL string, ownerID int64, auth AuthController, sync SyncController, groups GroupController, collector CollectionController, summary SummaryController, browser SummaryBrowserController, articles ArticleController, exports ExportController, logger *slog.Logger) (*Service, error) {
 	if token == "" {
 		return nil, fmt.Errorf("telegram bot token is not configured")
 	}
-	api, err := tgbotapi.NewBotAPI(token)
+	httpClient, err := newHTTPClient(proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("create telegram bot http client: %w", err)
+	}
+	api, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
 		return nil, fmt.Errorf("create telegram bot api: %w", err)
 	}
