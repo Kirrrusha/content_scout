@@ -3,6 +3,7 @@ package obsidian
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,26 @@ func TestRenderArticleIncludesFrontmatterAndSources(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("rendered article missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestRenderArticleDoesNotAppendSourcesWhenContentHasSourceSection(t *testing.T) {
+	created := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	content := RenderArticle(domain.Article{
+		Title:           "Go Guide",
+		Status:          domain.ArticleStatusDraft,
+		ContentMarkdown: "# Go Guide\n\nBody\n\n## Источники\n- [Primary](https://t.me/golang/1)",
+		CreatedAt:       created,
+		UpdatedAt:       created,
+	}, []domain.ArticleSource{{
+		SourceTitle: "Noise",
+		SourceURL:   "https://t.me/noise/2",
+		PublishedAt: created,
+	}})
+
+	text := string(content)
+	if strings.Contains(text, "Noise") || strings.Contains(text, "https://t.me/noise/2") {
+		t.Fatalf("rendered article appended duplicate sources:\n%s", text)
 	}
 }
 
@@ -68,6 +89,51 @@ func TestExportArticleWritesFileAndReusesHash(t *testing.T) {
 	}
 	if !second.Reused || second.Export.ID != first.Export.ID {
 		t.Fatalf("second result = %+v, want reused first export", second)
+	}
+}
+
+func TestExportArticleFallsBackWhenExportDirIsReadOnly(t *testing.T) {
+	ctx := context.Background()
+	cwd := t.TempDir()
+	previousCWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(previousCWD)
+	})
+	blockedDir := filepath.Join(cwd, "blocked")
+	if err := os.Mkdir(blockedDir, 0o500); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(blockedDir, 0o700)
+	})
+	created := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	article := &domain.Article{
+		ID:              7,
+		UserID:          1,
+		Title:           "Go Guide",
+		Slug:            "go-guide",
+		Status:          domain.ArticleStatusDraft,
+		ContentMarkdown: "# Go Guide",
+		CreatedAt:       created,
+		UpdatedAt:       created,
+	}
+	service := NewService(42, blockedDir, &fakeUsers{user: &domain.User{ID: 1, TelegramUserID: 42}}, &fakeArticles{article: article}, nil, &fakeExports{})
+
+	result, err := service.ExportArticle(ctx, 42, 7)
+	if err != nil {
+		t.Fatalf("ExportArticle() error = %v", err)
+	}
+	if !strings.HasPrefix(result.Path, filepath.Clean("./data/exports")+string(os.PathSeparator)) {
+		t.Fatalf("export path = %q, want local fallback under ./data/exports", result.Path)
+	}
+	if _, err := os.Stat(result.Path); err != nil {
+		t.Fatalf("fallback export stat: %v", err)
 	}
 }
 

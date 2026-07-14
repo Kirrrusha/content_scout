@@ -93,12 +93,12 @@ func TestRotatingWriterCleanupRemovesExpiredLogs(t *testing.T) {
 
 func TestNewJSONLoggerIncludesService(t *testing.T) {
 	var buf bytes.Buffer
-	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: parseLevel("info")})
+	handler := slog.NewJSONHandler(&buf, handlerOptions(parseLevel("info")))
 	logger := slog.New(handler).With("service", "api")
 	logger.Info("started")
 
 	output := buf.String()
-	if !strings.Contains(output, `"service":"api"`) || !strings.Contains(output, `"msg":"started"`) {
+	if !strings.Contains(output, `"time":"`) || !strings.Contains(output, `"service":"api"`) || !strings.Contains(output, `"msg":"started"`) {
 		t.Fatalf("output = %s", output)
 	}
 }

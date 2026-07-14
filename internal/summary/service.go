@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,9 +23,15 @@ type Service struct {
 	collections     storage.MessageCollectionRepository
 	summaries       storage.SummaryRepository
 	chats           storage.TelegramChatRepository
+	positions       storage.ReadPositionRepository
+	readMarker      TelegramReadMarker
 	pipeline        *pipeline.Pipeline
 	summarizer      llm.Summarizer
 	now             func() time.Time
+}
+
+type TelegramReadMarker interface {
+	MarkCollectedMessagesRead(ctx context.Context, telegramUserID int64, messages []domain.CollectedMessage) error
 }
 
 type GenerateRequest struct {
@@ -41,17 +48,22 @@ type GenerateResult struct {
 	DuplicateCount int
 }
 
-func NewService(ownerTelegramID int64, users storage.UserRepository, collections storage.MessageCollectionRepository, summaries storage.SummaryRepository, chats storage.TelegramChatRepository, summarizer llm.Summarizer) *Service {
+func NewService(ownerTelegramID int64, users storage.UserRepository, collections storage.MessageCollectionRepository, summaries storage.SummaryRepository, chats storage.TelegramChatRepository, positions storage.ReadPositionRepository, summarizer llm.Summarizer) *Service {
 	return &Service{
 		ownerTelegramID: ownerTelegramID,
 		users:           users,
 		collections:     collections,
 		summaries:       summaries,
 		chats:           chats,
+		positions:       positions,
 		pipeline:        pipeline.New(),
 		summarizer:      summarizer,
 		now:             time.Now,
 	}
+}
+
+func (s *Service) SetTelegramReadMarker(readMarker TelegramReadMarker) {
+	s.readMarker = readMarker
 }
 
 func (s *Service) GenerateFromCollection(ctx context.Context, req GenerateRequest) (*GenerateResult, error) {
@@ -96,14 +108,15 @@ func (s *Service) GenerateFromCollection(ctx context.Context, req GenerateReques
 		return nil, err
 	}
 
-	input := s.summaryInput(ctx, user.ID, processed, req.Format)
+	chatByID := s.chatsByID(ctx, user.ID)
+	input := summaryInput(processed, req.Format, chatByID)
 	llmResult, err := s.summarizer.Summarize(ctx, input)
 	if err != nil {
 		message := err.Error()
 		_ = s.summaries.UpdateJobStatus(ctx, summaryJob.ID, domain.JobStatusFailed, &message)
 		return nil, err
 	}
-	topics := topicsFromResult(llmResult)
+	topics := topicsFromResult(llmResult, processed, chatByID)
 	saved, err := s.summaries.CreateSummary(ctx, domain.Summary{
 		JobID:         summaryJob.ID,
 		Title:         llmResult.Title,
@@ -111,7 +124,7 @@ func (s *Service) GenerateFromCollection(ctx context.Context, req GenerateReques
 		MessagesCount: processed.Stats.KeptMessages,
 		SourcesCount:  distinctChatCount(messages),
 		TopicsCount:   len(topics),
-		Markdown:      renderMarkdown(llmResult),
+		Markdown:      renderMarkdown(llmResult, processed, chatByID),
 	}, topics)
 	if err != nil {
 		message := err.Error()
@@ -121,6 +134,11 @@ func (s *Service) GenerateFromCollection(ctx context.Context, req GenerateReques
 	if err := s.summaries.UpdateJobStatus(ctx, summaryJob.ID, domain.JobStatusCompleted, nil); err != nil {
 		return nil, err
 	}
+	// Read markers are intentionally best-effort and happen only after the summary
+	// is fully saved. A read-marker failure must not turn a persisted summary into
+	// a failed generation or hide it from the user.
+	_ = s.markReadPositions(ctx, user.ID, messages)
+	_ = s.markTelegramMessagesRead(ctx, req.TelegramUserID, messages)
 	return &GenerateResult{
 		SummaryID:      saved.ID,
 		SummaryJobID:   summaryJob.ID,
@@ -144,17 +162,16 @@ func (s *Service) ownerUser(ctx context.Context, telegramUserID int64) (*domain.
 	return user, nil
 }
 
-func (s *Service) summaryInput(ctx context.Context, userID int64, processed *pipeline.Result, format string) llm.SummaryInput {
+func summaryInput(processed *pipeline.Result, format string, chatByID map[int64]domain.TelegramChat) llm.SummaryInput {
 	if format == "" {
 		format = "standard"
 	}
-	chatTitles := s.chatTitles(ctx, userID)
 	inputMessages := make([]llm.SummaryMessageInput, 0, len(processed.Clusters))
 	for i, cluster := range processed.Clusters {
 		message := cluster.Canonical
 		inputMessages = append(inputMessages, llm.SummaryMessageInput{
 			Index:       i,
-			ChatTitle:   chatTitles[message.Source.ChatID],
+			ChatTitle:   chatTitle(chatByID[message.Source.ChatID]),
 			PublishedAt: message.Source.Date.Format(time.RFC3339),
 			Text:        message.Content,
 			URLs:        message.URLs,
@@ -163,21 +180,65 @@ func (s *Service) summaryInput(ctx context.Context, userID int64, processed *pip
 	return llm.SummaryInput{Language: "ru", Format: format, Messages: inputMessages}
 }
 
-func (s *Service) chatTitles(ctx context.Context, userID int64) map[int64]string {
-	titles := make(map[int64]string)
+func (s *Service) chatsByID(ctx context.Context, userID int64) map[int64]domain.TelegramChat {
+	byID := make(map[int64]domain.TelegramChat)
 	userChats, err := s.chats.ListByUserID(ctx, userID)
 	if err != nil {
-		return titles
+		return byID
 	}
 	for _, chat := range userChats {
-		titles[chat.ID] = chat.Title
+		byID[chat.ID] = chat
 	}
-	return titles
+	return byID
 }
 
-func topicsFromResult(result *llm.SummaryResult) []domain.SummaryTopic {
+func (s *Service) markReadPositions(ctx context.Context, userID int64, messages []domain.CollectedMessage) error {
+	if s.positions == nil {
+		return nil
+	}
+	maxMessageByChat := make(map[int64]int64)
+	for _, message := range messages {
+		if message.UserID != userID {
+			continue
+		}
+		if message.MessageID > maxMessageByChat[message.ChatID] {
+			maxMessageByChat[message.ChatID] = message.MessageID
+		}
+	}
+	for chatID, messageID := range maxMessageByChat {
+		position, err := s.positions.Find(ctx, userID, chatID)
+		if err != nil {
+			return fmt.Errorf("find read position: %w", err)
+		}
+		if position != nil && position.LastSummarizedMessageID >= messageID {
+			continue
+		}
+		if err := s.positions.Upsert(ctx, domain.ReadPosition{
+			UserID:                  userID,
+			ChatID:                  chatID,
+			LastSummarizedMessageID: messageID,
+		}); err != nil {
+			return fmt.Errorf("mark read position: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) markTelegramMessagesRead(ctx context.Context, telegramUserID int64, messages []domain.CollectedMessage) error {
+	if s.readMarker == nil {
+		return nil
+	}
+	if err := s.readMarker.MarkCollectedMessagesRead(ctx, telegramUserID, messages); err != nil {
+		return fmt.Errorf("mark telegram messages read: %w", err)
+	}
+	return nil
+}
+
+func topicsFromResult(result *llm.SummaryResult, processed *pipeline.Result, chatByID map[int64]domain.TelegramChat) []domain.SummaryTopic {
 	topics := make([]domain.SummaryTopic, 0, len(result.Topics))
 	for i, topic := range result.Topics {
+		sources := topicSources(topic.SourceIndexes, processed, chatByID)
+		messages := topicMessages(topic.SourceIndexes, processed, chatByID)
 		topics = append(topics, domain.SummaryTopic{
 			Title:         topic.Title,
 			ShortSummary:  topic.ShortSummary,
@@ -185,9 +246,11 @@ func topicsFromResult(result *llm.SummaryResult) []domain.SummaryTopic {
 			Category:      topic.Category,
 			Importance:    topic.Importance,
 			Confidence:    confidence(topic.Confidence),
-			MessagesCount: len(topic.SourceIndexes),
-			SourcesCount:  len(topic.SourceIndexes),
+			MessagesCount: len(messages),
+			SourcesCount:  len(sources),
 			Position:      i + 1,
+			Sources:       sources,
+			Messages:      messages,
 		})
 	}
 	sort.SliceStable(topics, func(i, j int) bool {
@@ -197,6 +260,91 @@ func topicsFromResult(result *llm.SummaryResult) []domain.SummaryTopic {
 		topics[i].Position = i + 1
 	}
 	return topics
+}
+
+func topicSources(sourceIndexes []int, processed *pipeline.Result, chatByID map[int64]domain.TelegramChat) []domain.SummaryTopicSource {
+	sources := make([]domain.SummaryTopicSource, 0, len(sourceIndexes))
+	seen := make(map[int64]struct{}, len(sourceIndexes))
+	for _, index := range sourceIndexes {
+		if index < 0 || index >= len(processed.Clusters) {
+			continue
+		}
+		chatID := processed.Clusters[index].Canonical.Source.ChatID
+		if _, ok := seen[chatID]; ok {
+			continue
+		}
+		chat, ok := chatByID[chatID]
+		if !ok {
+			continue
+		}
+		seen[chatID] = struct{}{}
+		sources = append(sources, domain.SummaryTopicSource{
+			ChatID:         chat.ID,
+			TelegramChatID: chat.TelegramChatID,
+			Title:          chat.Title,
+			Username:       chat.Username,
+		})
+	}
+	return sources
+}
+
+func topicMessages(sourceIndexes []int, processed *pipeline.Result, chatByID map[int64]domain.TelegramChat) []domain.SummaryTopicMessage {
+	messages := make([]domain.SummaryTopicMessage, 0, len(sourceIndexes))
+	seen := make(map[int64]struct{}, len(sourceIndexes))
+	for _, index := range sourceIndexes {
+		if index < 0 || index >= len(processed.Clusters) {
+			continue
+		}
+		cluster := processed.Clusters[index]
+		canonicalID := cluster.Canonical.Source.ID
+		for _, message := range cluster.Messages {
+			collectedID := message.Source.ID
+			if collectedID == 0 {
+				continue
+			}
+			if _, ok := seen[collectedID]; ok {
+				continue
+			}
+			seen[collectedID] = struct{}{}
+			chat := chatByID[message.Source.ChatID]
+			messages = append(messages, domain.SummaryTopicMessage{
+				CollectedMessageID: collectedID,
+				ChatID:             message.Source.ChatID,
+				TelegramChatID:     message.Source.TelegramChatID,
+				MessageID:          message.Source.MessageID,
+				SourceTitle:        chatTitle(chat),
+				SourceURL:          telegramMessageURL(message.Source.TelegramChatID, message.Source.MessageID, stringValue(chat.Username), message.Source.URL),
+				ClusterIndex:       index,
+				IsCanonical:        collectedID == canonicalID,
+			})
+		}
+	}
+	return messages
+}
+
+func chatTitle(chat domain.TelegramChat) string {
+	if strings.TrimSpace(chat.Title) == "" {
+		return "Без названия"
+	}
+	return chat.Title
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func telegramMessageURL(telegramChatID, messageID int64, username, fallback string) string {
+	if strings.TrimSpace(username) != "" {
+		return fmt.Sprintf("https://t.me/%s/%d", strings.TrimPrefix(strings.TrimSpace(username), "@"), messageID)
+	}
+	chatID := strconv.FormatInt(telegramChatID, 10)
+	if strings.HasPrefix(chatID, "-100") {
+		return fmt.Sprintf("https://t.me/c/%s/%d", strings.TrimPrefix(chatID, "-100"), messageID)
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func confidence(value string) domain.ConfidenceLevel {
@@ -210,7 +358,7 @@ func confidence(value string) domain.ConfidenceLevel {
 	}
 }
 
-func renderMarkdown(result *llm.SummaryResult) string {
+func renderMarkdown(result *llm.SummaryResult, processed *pipeline.Result, chatByID map[int64]domain.TelegramChat) string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "# %s\n\n%s\n", result.Title, result.Overview)
 	for _, topic := range result.Topics {
@@ -218,8 +366,47 @@ func renderMarkdown(result *llm.SummaryResult) string {
 		if topic.WhyImportant != "" {
 			fmt.Fprintf(&builder, "\n**Почему важно:** %s\n", topic.WhyImportant)
 		}
+		if links := topicMessageLinks(topic.SourceIndexes, processed, chatByID); len(links) > 0 {
+			builder.WriteString("\n**Сообщения:**\n")
+			for _, link := range links {
+				fmt.Fprintf(&builder, "- [%s](%s)\n", link.title, link.url)
+			}
+		}
 	}
 	return builder.String()
+}
+
+type topicMessageLink struct {
+	title string
+	url   string
+}
+
+func topicMessageLinks(sourceIndexes []int, processed *pipeline.Result, chatByID map[int64]domain.TelegramChat) []topicMessageLink {
+	const limit = 8
+	links := make([]topicMessageLink, 0, min(len(sourceIndexes), limit))
+	seen := make(map[string]struct{}, len(sourceIndexes))
+	for _, index := range sourceIndexes {
+		if index < 0 || index >= len(processed.Clusters) {
+			continue
+		}
+		for _, message := range processed.Clusters[index].Messages {
+			chat := chatByID[message.Source.ChatID]
+			url := telegramMessageURL(message.Source.TelegramChatID, message.Source.MessageID, stringValue(chat.Username), message.Source.URL)
+			if url == "" {
+				continue
+			}
+			key := fmt.Sprintf("%d:%d", message.Source.TelegramChatID, message.Source.MessageID)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			links = append(links, topicMessageLink{title: chatTitle(chat), url: url})
+			if len(links) >= limit {
+				return links
+			}
+		}
+	}
+	return links
 }
 
 func distinctChatCount(messages []domain.CollectedMessage) int {

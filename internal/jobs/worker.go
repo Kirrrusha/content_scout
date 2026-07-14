@@ -12,10 +12,15 @@ import (
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
 	"github.com/kirilllebedenko/content_scout/internal/storage"
+	"github.com/kirilllebedenko/content_scout/internal/summary"
 )
 
 type Handler interface {
 	HandleJob(ctx context.Context, job domain.Job) error
+}
+
+type ResultHandler interface {
+	HandleJobWithResult(ctx context.Context, job domain.Job) ([]byte, error)
 }
 
 type HandlerFunc func(ctx context.Context, job domain.Job) error
@@ -61,10 +66,15 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	start := w.now()
 	logger := w.logger.With("job_id", job.ID, "job_type", job.Type, "attempt", job.Attempt, "worker_id", w.id)
 	logger.Info("job started")
-	err = w.handler.HandleJob(ctx, *job)
+	var result []byte
+	if resultHandler, ok := w.handler.(ResultHandler); ok {
+		result, err = resultHandler.HandleJobWithResult(ctx, *job)
+	} else {
+		err = w.handler.HandleJob(ctx, *job)
+	}
 	duration := w.now().Sub(start)
 	if err == nil {
-		if completeErr := w.repo.Complete(ctx, job.ID); completeErr != nil {
+		if completeErr := w.repo.CompleteWithResult(ctx, job.ID, result); completeErr != nil {
 			return true, completeErr
 		}
 		logger.Info("job completed", "duration_ms", duration.Milliseconds(), "result", "completed")
@@ -140,4 +150,70 @@ func (h ScheduledPipelineHandler) HandleJob(ctx context.Context, job domain.Job)
 		return errors.New("invalid user input: schedule id is required")
 	}
 	return h.Scheduler.RunSchedule(ctx, payload.Schedule)
+}
+
+type SummaryGenerationHandler struct {
+	Summarizer interface {
+		GenerateFromCollection(ctx context.Context, req summary.GenerateRequest) (*summary.GenerateResult, error)
+	}
+}
+
+func (h SummaryGenerationHandler) HandleJob(ctx context.Context, job domain.Job) error {
+	_, err := h.HandleJobWithResult(ctx, job)
+	return err
+}
+
+func (h SummaryGenerationHandler) HandleJobWithResult(ctx context.Context, job domain.Job) ([]byte, error) {
+	if job.Type != domain.JobTypeSummaryGeneration {
+		return nil, fmt.Errorf("unsupported job type: %s", job.Type)
+	}
+	if h.Summarizer == nil {
+		return nil, errors.New("summary generation runtime is not configured")
+	}
+	var payload domain.JobPayloadSummaryGeneration
+	if err := json.Unmarshal(job.Payload, &payload); err != nil {
+		return nil, fmt.Errorf("invalid user input: decode summary generation payload: %w", err)
+	}
+	if payload.TelegramUserID == 0 || payload.CollectionJobID == 0 {
+		return nil, errors.New("invalid user input: telegram_user_id and collection_job_id are required")
+	}
+	result, err := h.Summarizer.GenerateFromCollection(ctx, summary.GenerateRequest{
+		TelegramUserID:  payload.TelegramUserID,
+		CollectionJobID: payload.CollectionJobID,
+		Format:          payload.Format,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(domain.JobResultSummaryGeneration{
+		SummaryID:      result.SummaryID,
+		SummaryJobID:   result.SummaryJobID,
+		TopicsCount:    result.TopicsCount,
+		MessagesCount:  result.MessagesCount,
+		DuplicateCount: result.DuplicateCount,
+	})
+}
+
+type MultiHandler []Handler
+
+func (h MultiHandler) HandleJob(ctx context.Context, job domain.Job) error {
+	_, err := h.HandleJobWithResult(ctx, job)
+	return err
+}
+
+func (h MultiHandler) HandleJobWithResult(ctx context.Context, job domain.Job) ([]byte, error) {
+	for _, handler := range h {
+		if resultHandler, ok := handler.(ResultHandler); ok {
+			result, err := resultHandler.HandleJobWithResult(ctx, job)
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "unsupported job type") {
+				return result, err
+			}
+			continue
+		}
+		err := handler.HandleJob(ctx, job)
+		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "unsupported job type") {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("unsupported job type: %s", job.Type)
 }

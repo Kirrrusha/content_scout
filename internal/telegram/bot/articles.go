@@ -9,6 +9,7 @@ import (
 
 	"github.com/kirilllebedenko/content_scout/internal/article"
 	"github.com/kirilllebedenko/content_scout/internal/domain"
+	"github.com/kirilllebedenko/content_scout/internal/summary"
 )
 
 type ArticleController interface {
@@ -202,6 +203,12 @@ func (r *Router) renderArticle(ctx context.Context, chatID, userID, articleID in
 func articleResultOutgoing(chatID int64, editMessageID int, callbackAnswer string, result *article.Result, err error) (Outgoing, error) {
 	if errors.Is(err, article.ErrArticleNotFound) {
 		return Outgoing{ChatID: chatID, Text: "Статья не найдена.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	}
+	if errors.Is(err, summary.ErrSummaryNotFound) {
+		return Outgoing{ChatID: chatID, Text: "Сводка не найдена.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	}
+	if errors.Is(err, summary.ErrTopicNotFound) {
+		return Outgoing{ChatID: chatID, Text: "Тема не найдена.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 	}
 	if err != nil {
 		return Outgoing{ChatID: chatID, Text: publicAuthError(err), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil

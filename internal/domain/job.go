@@ -21,6 +21,7 @@ type Job struct {
 	Type             JobType
 	Status           JobStatus
 	Payload          json.RawMessage
+	Result           json.RawMessage
 	Attempt          int
 	MaxAttempts      int
 	AvailableAt      time.Time
@@ -36,4 +37,18 @@ type Job struct {
 
 type JobPayloadScheduledPipeline struct {
 	Schedule SummarySchedule `json:"schedule"`
+}
+
+type JobPayloadSummaryGeneration struct {
+	TelegramUserID  int64  `json:"telegram_user_id"`
+	CollectionJobID int64  `json:"collection_job_id"`
+	Format          string `json:"format"`
+}
+
+type JobResultSummaryGeneration struct {
+	SummaryID      int64 `json:"summary_id"`
+	SummaryJobID   int64 `json:"summary_job_id"`
+	TopicsCount    int   `json:"topics_count"`
+	MessagesCount  int   `json:"messages_count"`
+	DuplicateCount int   `json:"duplicate_count"`
 }

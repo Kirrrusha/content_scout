@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/article"
@@ -111,15 +112,9 @@ func (s *Service) persist(ctx context.Context, content []byte, fileName, vaultPa
 		path := filepath.Join(s.exportDir, existing.VaultPath)
 		return &Result{Export: *existing, Path: path, Content: content, Reused: true}, nil
 	}
-	path := filepath.Join(s.exportDir, vaultPath)
-	path = uniquePath(path)
-	vaultPath = filepath.ToSlash(strings.TrimPrefix(path, filepath.Clean(s.exportDir)+string(os.PathSeparator)))
-	fileName = filepath.Base(path)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("create export directory: %w", err)
-	}
-	if err := os.WriteFile(path, content, 0o644); err != nil {
-		return nil, fmt.Errorf("write obsidian markdown: %w", err)
+	path, vaultPath, fileName, err := s.writeLocalExport(content, vaultPath)
+	if err != nil {
+		return nil, err
 	}
 	exportMethod := "telegram_document"
 	if s.rest != nil && s.rest.Enabled() {
@@ -140,6 +135,61 @@ func (s *Service) persist(ctx context.Context, content []byte, fileName, vaultPa
 		return nil, err
 	}
 	return &Result{Export: *created, Path: path, Content: content}, nil
+}
+
+func (s *Service) writeLocalExport(content []byte, vaultPath string) (string, string, string, error) {
+	var lastErr error
+	for _, exportDir := range exportDirCandidates(s.exportDir) {
+		path := filepath.Join(exportDir, vaultPath)
+		path = uniquePath(path)
+		currentVaultPath := filepath.ToSlash(strings.TrimPrefix(path, filepath.Clean(exportDir)+string(os.PathSeparator)))
+		fileName := filepath.Base(path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			lastErr = fmt.Errorf("create export directory %q: %w", filepath.Dir(path), err)
+			if recoverableExportDirError(err) {
+				continue
+			}
+			return "", "", "", lastErr
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			lastErr = fmt.Errorf("write obsidian markdown %q: %w", path, err)
+			if recoverableExportDirError(err) {
+				continue
+			}
+			return "", "", "", lastErr
+		}
+		return path, currentVaultPath, fileName, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no export directories configured")
+	}
+	return "", "", "", lastErr
+}
+
+func exportDirCandidates(exportDir string) []string {
+	seen := make(map[string]struct{}, 3)
+	candidates := make([]string, 0, 3)
+	for _, candidate := range []string{
+		exportDir,
+		"./data/exports",
+		filepath.Join(os.TempDir(), "content_scout", "exports"),
+	} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		clean := filepath.Clean(candidate)
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		candidates = append(candidates, clean)
+	}
+	return candidates
+}
+
+func recoverableExportDirError(err error) bool {
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EROFS) || errors.Is(err, syscall.EACCES)
 }
 
 func (s *Service) writeRESTNote(ctx context.Context, vaultPath string, content []byte) error {
@@ -190,7 +240,10 @@ func RenderArticle(item domain.Article, sources []domain.ArticleSource) []byte {
 	}
 	b.WriteString(content)
 	b.WriteString("\n")
-	if len(sources) > 0 && !strings.Contains(strings.ToLower(content), "## источники") {
+	if len(sources) > 0 && strings.Contains(strings.ToLower(content), "## источники") {
+		return []byte(b.String())
+	}
+	if len(sources) > 0 {
 		b.WriteString("\n## Источники\n")
 	}
 	for i, source := range sources {

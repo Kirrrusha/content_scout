@@ -59,11 +59,13 @@ Authorization: Bearer <token>
 | `HTTP_ADDR` | нет | `:8080` | Адрес, на котором слушает API. |
 | `DATABASE_URL` | да | local PostgreSQL URL в коде, Docker URL в `.env.example` | Строка подключения к PostgreSQL. |
 | `SERVICE_TOKEN` | да для `cmd/api` | empty | Bearer token для всех внутренних API endpoints, кроме `/health` и `/ready`. |
+| `INTERNAL_API_URL` | да для `cmd/bot` | `http://127.0.0.1:8080` | Base URL внутреннего API, который использует бот. В Docker Compose используйте `http://api:8080`. |
 | `LOG_FORMAT` | нет | `json` | Формат логов: `json` для Docker/production-like запусков или `text` для локальной разработки. |
 | `LOG_LEVEL` | нет | `info` | Минимальный уровень логов: `debug`, `info`, `warn` или `error`. |
 | `LOG_DIR` | нет | `./data/logs` локально, `/data/logs` в Docker | Директория для локальных rotated log files. Пустое значение отключает file logging. |
 | `LOG_RETENTION` | нет | `24h` | Удалять log files старше этого duration. |
 | `LOG_ROTATION_INTERVAL` | нет | `1h` | Интервал ротации файлов и cleanup loop. |
+| `SUMMARY_RETENTION` | нет | `0` | Удалять сохранённые summary старше этого количества часов из `cmd/summary-worker`; `0` отключает cleanup. |
 | `WORKER_ID` | нет | hostname-based | Стабильный id, который worker processes пишут в job locks и logs. |
 | `TELEGRAM_BOT_TOKEN` | да для `cmd/bot` | empty | Telegram Bot API token. Если пустой, бот выходит в idle-режиме. |
 | `TELEGRAM_OWNER_ID` | да для действий bot/API | `0` | Telegram user id, которому разрешено управлять ботом и API flow. |
@@ -76,6 +78,7 @@ Authorization: Bearer <token>
 | `LLM_BASE_URL` | зависит от provider | empty | Base URL OpenAI-compatible chat completions API. |
 | `LLM_API_KEY` | да для summary/article generation | empty | LLM API key. Не логировать. |
 | `LLM_MODEL` | да для summary/article generation | empty | Имя модели для генерации summary и статей. |
+| `LLM_TIMEOUT` | нет | `3m` | HTTP timeout одного LLM-запроса. Увеличьте для больших групп или длинных периодов. |
 | `ENCRYPTION_KEY` | reserved | empty | Зарезервировано для будущего encrypted secret storage. |
 | `EXPORT_DIR` | нет | `./data/exports` локально, `/data/exports` в Docker | Директория для Markdown exports. |
 | `OBSIDIAN_REST_URL` | нет | empty | Base URL Obsidian Local REST API. |
@@ -87,7 +90,7 @@ Authorization: Bearer <token>
 | Команда | Описание |
 |---|---|
 | `make build` | Собрать все Go command binaries в обычном локальном режиме без native TDLib. |
-| `make build-tdlib` | Собрать `api`, `bot` и `tdlib-worker` с `-tags tdlib` и включённым CGO. Требует локальный `libtdjson`. |
+| `make build-tdlib` | Собрать `api` и `tdlib-worker` с native TDLib, а `bot` без TDLib. Для TDLib binaries требуется локальный `libtdjson`. |
 | `make test` | Запустить весь стандартный Go test suite. |
 | `make test-tdlib-nocgo` | Запустить тесты TDLib package с tag `tdlib`, но без CGO, проверяя fallback path. |
 | `make test-tdlib-integration` | Запустить опциональные native TDLib integration tests. Требует `libtdjson`, Telegram API credentials и директорию сессии. |
@@ -110,7 +113,7 @@ Authorization: Bearer <token>
 | `/start` | Открыть главное меню бота. |
 | `/connect` | Начать или продолжить авторизацию Telegram-аккаунта через TDLib. |
 | `/phone <number>` | Передать номер телефона, который запросил TDLib. |
-| `/code <code>` | Передать код подтверждения входа в Telegram. |
+| `/code <code>` | Отклоняется для безопасности. Не отправляйте коды входа в Telegram-чат бота; передавайте их через `POST /telegram/auth/code` или доверенный локальный админ-интерфейс. |
 | `/password <2fa password>` | Передать пароль 2FA, если он нужен аккаунту. |
 | `/session` | Показать текущую TDLib-сессию и состояние авторизации. |
 | `/delete_session` | Выйти из аккаунта и удалить сохранённую TDLib-сессию. |
@@ -337,7 +340,7 @@ obsidian_export
 scheduled_pipeline
 ```
 
-`cmd/summary-worker` сейчас кладёт due schedules в `scheduled_pipeline` jobs и затем обрабатывает очередь. Scheduled jobs используют deduplication key на schedule/local day, поэтому повторный polling не создаёт дубли. Временные ошибки повторяются с exponential backoff; постоянные configuration/input errors уходят в `dead`.
+`cmd/summary-worker` сейчас кладёт due schedules в `scheduled_pipeline` jobs и затем обрабатывает очередь. Scheduled jobs используют deduplication key на schedule/local day, поэтому повторный polling не создаёт дубли. Временные ошибки повторяются с exponential backoff; постоянные configuration/input errors уходят в `dead`. Если `SUMMARY_RETENTION` больше нуля, worker также удаляет summary старше этого количества часов на каждом polling tick.
 
 Можно безопасно запускать несколько workers:
 
@@ -420,7 +423,3 @@ go test ./internal/storage/postgres
 - Внутренние API endpoints требуют `SERVICE_TOKEN`, кроме `/health` и `/ready`.
 - Логи не должны содержать тексты сообщений и secrets.
 - Docker application containers запускаются от non-root пользователя.
-
-## Следующий PR
-
-Плановая цепочка из обновлённого roadmap выполнена до `PR-019`.

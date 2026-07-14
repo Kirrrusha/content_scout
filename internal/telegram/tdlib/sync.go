@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
@@ -23,17 +24,19 @@ type SyncService struct {
 	sessions        storage.TelegramSessionRepository
 	folders         storage.TelegramFolderRepository
 	chats           storage.TelegramChatRepository
+	groups          storage.SourceGroupRepository
 	factory         ClientFactory
 	now             func() time.Time
 }
 
-func NewSyncService(ownerTelegramID int64, users storage.UserRepository, sessions storage.TelegramSessionRepository, folders storage.TelegramFolderRepository, chats storage.TelegramChatRepository, factory ClientFactory) *SyncService {
+func NewSyncService(ownerTelegramID int64, users storage.UserRepository, sessions storage.TelegramSessionRepository, folders storage.TelegramFolderRepository, chats storage.TelegramChatRepository, groups storage.SourceGroupRepository, factory ClientFactory) *SyncService {
 	return &SyncService{
 		ownerTelegramID: ownerTelegramID,
 		users:           users,
 		sessions:        sessions,
 		folders:         folders,
 		chats:           chats,
+		groups:          groups,
 		factory:         factory,
 		now:             time.Now,
 	}
@@ -68,10 +71,23 @@ func (s *SyncService) Sync(ctx context.Context, telegramUserID int64) (*SyncResu
 	}
 	allChats := normalizeChats(user.ID, mainChats, false)
 	allChats = append(allChats, normalizeChats(user.ID, archiveChats, true)...)
+	folderChatsByID := make(map[int32][]domain.TelegramChat, len(folders))
+	for _, folder := range folders {
+		chats, err := client.ListFolderChats(ctx, folder.TelegramID)
+		if err != nil {
+			return nil, fmt.Errorf("list telegram folder chats: %w", err)
+		}
+		normalized := normalizeChats(user.ID, chats, false)
+		folderChatsByID[folder.TelegramID] = normalized
+		allChats = append(allChats, normalized...)
+	}
 	allChats = filterPersonalChats(allChats)
 
 	if err := s.chats.UpsertMany(ctx, allChats); err != nil {
 		return nil, fmt.Errorf("persist telegram chats: %w", err)
+	}
+	if err := s.syncSourceGroups(ctx, user.ID, folders, folderChatsByID); err != nil {
+		return nil, err
 	}
 
 	connectedAt := syncedAt
@@ -91,6 +107,53 @@ func (s *SyncService) Sync(ctx context.Context, telegramUserID int64) (*SyncResu
 		ChatsCount:   len(allChats),
 		SyncedAt:     syncedAt,
 	}, nil
+}
+
+func (s *SyncService) syncSourceGroups(ctx context.Context, userID int64, folders []domain.TelegramFolder, folderChatsByID map[int32][]domain.TelegramChat) error {
+	if s.groups == nil {
+		return nil
+	}
+	sourceGroups, err := s.groups.ListByUserID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("list source groups: %w", err)
+	}
+	groupByName := make(map[string]domain.SourceGroup, len(sourceGroups))
+	for _, group := range sourceGroups {
+		groupByName[normalizeGroupName(group.Name)] = group
+	}
+	savedChats, err := s.chats.ListByUserID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("list synced chats for source groups: %w", err)
+	}
+	chatByTelegramID := make(map[int64]domain.TelegramChat, len(savedChats))
+	for _, chat := range savedChats {
+		chatByTelegramID[chat.TelegramChatID] = chat
+	}
+	for _, folder := range folders {
+		name := strings.TrimSpace(folder.Name)
+		if name == "" {
+			continue
+		}
+		group, ok := groupByName[normalizeGroupName(name)]
+		if !ok {
+			created, err := s.groups.Create(ctx, domain.SourceGroup{UserID: userID, Name: name})
+			if err != nil {
+				return fmt.Errorf("create source group from folder: %w", err)
+			}
+			group = *created
+			groupByName[normalizeGroupName(name)] = group
+		}
+		for _, folderChat := range folderChatsByID[folder.TelegramID] {
+			chat, ok := chatByTelegramID[folderChat.TelegramChatID]
+			if !ok || chat.Type == domain.ChatTypePrivate {
+				continue
+			}
+			if err := s.groups.AddChat(ctx, domain.SourceGroupChat{GroupID: group.ID, ChatID: chat.ID, Enabled: true}); err != nil {
+				return fmt.Errorf("add folder chat to source group: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *SyncService) ListFolders(ctx context.Context, telegramUserID int64) ([]domain.TelegramFolder, error) {
@@ -174,4 +237,8 @@ func filterPersonalChats(chats []domain.TelegramChat) []domain.TelegramChat {
 		filtered = append(filtered, chat)
 	}
 	return filtered
+}
+
+func normalizeGroupName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }

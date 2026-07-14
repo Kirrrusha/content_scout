@@ -61,6 +61,7 @@ type SummaryRepository interface {
 	FindSummaryByUser(ctx context.Context, userID, summaryID int64) (*domain.Summary, error)
 	ListSummariesByUser(ctx context.Context, userID int64, limit int) ([]domain.Summary, error)
 	ListTopics(ctx context.Context, summaryID int64) ([]domain.SummaryTopic, error)
+	DeleteSummariesOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 }
 
 type ArticleRepository interface {
@@ -93,8 +94,10 @@ type SummaryScheduleRepository interface {
 
 type JobRepository interface {
 	Enqueue(ctx context.Context, job domain.Job) (*domain.Job, error)
+	Find(ctx context.Context, jobID int64) (*domain.Job, error)
 	ClaimNext(ctx context.Context, workerID string, lease time.Duration) (*domain.Job, error)
 	Complete(ctx context.Context, jobID int64) error
+	CompleteWithResult(ctx context.Context, jobID int64, result []byte) error
 	Retry(ctx context.Context, jobID int64, availableAt time.Time, message string) error
 	Dead(ctx context.Context, jobID int64, message string) error
 	RecoverExpiredLeases(ctx context.Context) (int64, error)

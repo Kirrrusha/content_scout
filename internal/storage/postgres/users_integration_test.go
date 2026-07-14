@@ -220,6 +220,56 @@ func TestDomainRepositoriesIntegration(t *testing.T) {
 	if foundExport == nil || foundExport.ID != export.ID {
 		t.Fatalf("export = %+v, want id %d", foundExport, export.ID)
 	}
+
+	if _, err := db.ExecContext(ctx, `UPDATE summaries SET created_at = $1 WHERE id = $2`, now.Add(-48*time.Hour), summary.ID); err != nil {
+		t.Fatalf("make summary old: %v", err)
+	}
+	fresh, err := summaryRepo.CreateSummary(ctx, domain.Summary{
+		JobID:         job.ID,
+		Title:         "Fresh Digest",
+		Overview:      "Fresh overview",
+		MessagesCount: 1,
+		SourcesCount:  1,
+		Markdown:      "# Fresh Digest",
+	}, nil)
+	if err != nil {
+		t.Fatalf("CreateSummary(fresh) error = %v", err)
+	}
+	deleted, err := summaryRepo.DeleteSummariesOlderThan(ctx, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("DeleteSummariesOlderThan() error = %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", deleted)
+	}
+	deletedSummary, err := summaryRepo.FindSummary(ctx, summary.ID)
+	if err != nil {
+		t.Fatalf("FindSummary(deleted) error = %v", err)
+	}
+	if deletedSummary != nil {
+		t.Fatalf("deleted summary = %+v, want nil", deletedSummary)
+	}
+	keptSummary, err := summaryRepo.FindSummary(ctx, fresh.ID)
+	if err != nil {
+		t.Fatalf("FindSummary(fresh) error = %v", err)
+	}
+	if keptSummary == nil {
+		t.Fatal("fresh summary was deleted")
+	}
+	foundJob, err := summaryRepo.FindJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("FindJob() error = %v", err)
+	}
+	if foundJob == nil {
+		t.Fatal("summary cleanup deleted summary job")
+	}
+	foundExport, err = exportRepo.FindByContentHash(ctx, export.ContentHash)
+	if err != nil {
+		t.Fatalf("FindByContentHash(after cleanup) error = %v", err)
+	}
+	if foundExport == nil || foundExport.SummaryID != nil {
+		t.Fatalf("export after cleanup = %+v, want summary_id null", foundExport)
+	}
 }
 
 func openIntegrationDB(t *testing.T) (context.Context, *sql.DB) {

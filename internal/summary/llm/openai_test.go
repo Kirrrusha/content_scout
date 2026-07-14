@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -15,6 +16,19 @@ func TestOpenAICompatibleSummarize(t *testing.T) {
 		}
 		if r.Header.Get("Authorization") != "Bearer key" {
 			t.Fatalf("authorization header = %q", r.Header.Get("Authorization"))
+		}
+		var request chatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if len(request.Messages) != 2 {
+			t.Fatalf("messages len = %d", len(request.Messages))
+		}
+		if !strings.Contains(request.Messages[0].Content, "разбей весь набор сообщений на самостоятельные темы") {
+			t.Fatalf("system prompt does not require topic clustering: %q", request.Messages[0].Content)
+		}
+		if !strings.Contains(request.Messages[0].Content, "не ограничивайся заранее заданной темой") {
+			t.Fatalf("system prompt still looks single-topic oriented: %q", request.Messages[0].Content)
 		}
 		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
 			Message chatMessage `json:"message"`
@@ -57,5 +71,24 @@ func TestOpenAICompatibleConvertToArticle(t *testing.T) {
 	}
 	if result.Title != "Go Guide" || result.Type != "guide" || len(result.Tags) != 1 {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestOpenAICompatibleIncludesErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	_, err := NewOpenAICompatible(server.URL, "key", "model", server.Client()).Summarize(context.Background(), SummaryInput{
+		Language: "ru",
+		Format:   "standard",
+		Messages: []SummaryMessageInput{{Index: 0, Text: "Message"}},
+	})
+	if err == nil {
+		t.Fatal("Summarize() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "path=/chat/completions") || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("error = %q", err)
 	}
 }

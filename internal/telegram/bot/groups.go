@@ -23,7 +23,7 @@ type GroupController interface {
 
 func groupsText(groups []domain.SourceGroup) string {
 	if len(groups) == 0 {
-		return "Группы источников пока не созданы.\n\nСоздайте группу командой:\n/group_create Golang"
+		return "Группы источников пока не созданы.\n\nВыполните /sync, чтобы подтянуть папки Telegram, или создайте группу вручную."
 	}
 	var builder strings.Builder
 	builder.WriteString("Мои группы:\n\n")
@@ -34,7 +34,7 @@ func groupsText(groups []domain.SourceGroup) string {
 		}
 		fmt.Fprintf(&builder, "%d. %s%s\n", group.ID, group.Name, description)
 	}
-	builder.WriteString("\nКоманды:\n/group_create <name>\n/group_rename <id> <name>\n/group_delete <id>\n/group_chats <id>\n/group_add_chat <group_id> <chat_id>\n/group_remove_chat <group_id> <chat_id>")
+	builder.WriteString("\nОткройте группу, чтобы посмотреть источники.")
 	return builder.String()
 }
 
@@ -45,22 +45,41 @@ func groupChatsText(group *sourcegroups.GroupWithChats) string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "Группа: %s\n\n", group.Group.Name)
 	if len(group.Chats) == 0 {
-		builder.WriteString("В группе пока нет источников.")
+		builder.WriteString("В группе пока нет источников.\n\nОткройте /chats и добавьте нужные чаты в эту группу.")
 		return builder.String()
 	}
 	linkByChatID := make(map[int64]domain.SourceGroupChat, len(group.Links))
 	for _, link := range group.Links {
 		linkByChatID[link.ChatID] = link
 	}
-	for _, chat := range group.Chats {
+	fmt.Fprintf(&builder, "Источников: %d\n\n", len(group.Chats))
+	for index, chat := range group.Chats {
 		link := linkByChatID[chat.ID]
-		enabled := "off"
-		if link.Enabled {
-			enabled = "on"
+		status := ""
+		if !link.Enabled {
+			status = " (выключен)"
 		}
-		fmt.Fprintf(&builder, "%d. %s [%s, priority: %d, %s]\n", chat.ID, chat.Title, chat.Type, link.Priority, enabled)
+		fmt.Fprintf(&builder, "%d. %s%s\n", index+1, chat.Title, status)
 	}
+	builder.WriteString("\nМожно создать сводку по этой группе или вернуться к списку групп.")
 	return builder.String()
+}
+
+func groupsMenu(groups []domain.SourceGroup) Menu {
+	menu := make(Menu, 0, len(groups)+2)
+	for _, group := range groups {
+		menu = append(menu, []MenuButton{{Text: fmt.Sprintf("%d. %s", group.ID, compactButtonTitle(group.Name)), Data: fmt.Sprintf("groups:open:%d", group.ID)}})
+	}
+	menu = append(menu, []MenuButton{{Text: "Синхронизировать", Data: "groups:sync"}})
+	menu = append(menu, []MenuButton{{Text: "Назад", Data: ActionBackHome}})
+	return menu
+}
+
+func groupDetailsMenu(groupID int64) Menu {
+	return Menu{
+		{{Text: "Создать сводку", Data: fmt.Sprintf("newsum:group:%d", groupID)}},
+		{{Text: "Все группы", Data: ActionGroups}, {Text: "Назад", Data: ActionBackHome}},
+	}
 }
 
 func publicGroupError(err error) string {
@@ -69,11 +88,19 @@ func publicGroupError(err error) string {
 	}
 	switch {
 	case errors.Is(err, sourcegroups.ErrGroupNotFound):
-		return "Группа источников не найдена."
+		return "Группа источников не найдена или в ней нет чатов. Откройте /chats, затем добавьте источник командой /group_add_chat <group_id> <chat_id>."
 	case errors.Is(err, sourcegroups.ErrChatNotFound):
 		return "Чат не найден среди синхронизированных источников. Сначала выполните /sync и посмотрите /chats."
 	default:
-		return publicAuthError(err)
+		message := err.Error()
+		switch {
+		case strings.Contains(message, sourcegroups.ErrGroupNotFound.Error()):
+			return "Группа источников не найдена или в ней нет чатов. Откройте /chats, затем добавьте источник командой /group_add_chat <group_id> <chat_id>."
+		case strings.Contains(message, sourcegroups.ErrChatNotFound.Error()):
+			return "Чат не найден среди синхронизированных источников. Сначала выполните /sync и посмотрите /chats."
+		default:
+			return publicAuthError(err)
+		}
 	}
 }
 

@@ -44,6 +44,16 @@ func main() {
 	}
 	defer logRuntime.Close()
 	logger = logRuntime.Logger
+	stderrPrefixer, err := logging.StartStderrTimestampPrefixer(nil)
+	if err != nil {
+		logger.Error("configure stderr timestamp prefixer failed", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := stderrPrefixer.Close(); err != nil {
+			logger.Error("close stderr timestamp prefixer failed", "error", err)
+		}
+	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -73,6 +83,7 @@ func main() {
 		sessionRepo,
 		postgres.NewTelegramFolderRepository(db),
 		postgres.NewTelegramChatRepository(db),
+		postgres.NewSourceGroupRepository(db),
 		factory,
 	)
 	groupService := sourcegroups.NewService(
@@ -98,8 +109,10 @@ func main() {
 		postgres.NewMessageCollectionRepository(db),
 		summaryRepo,
 		postgres.NewTelegramChatRepository(db),
-		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: 60 * time.Second}),
+		postgres.NewReadPositionRepository(db),
+		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: cfg.LLMTimeout}),
 	)
+	summaryService.SetTelegramReadMarker(tdlib.NewReadService(cfg.TelegramOwnerID, userRepo, sessionRepo, factory))
 	summaryBrowser := summary.NewBrowser(cfg.TelegramOwnerID, userRepo, summaryRepo)
 	articleService := article.NewService(
 		cfg.TelegramOwnerID,
@@ -108,7 +121,7 @@ func main() {
 		postgres.NewMessageCollectionRepository(db),
 		postgres.NewTelegramChatRepository(db),
 		postgres.NewArticleRepository(db),
-		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: 60 * time.Second}),
+		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: cfg.LLMTimeout}),
 	)
 	exportService := obsidian.NewService(
 		cfg.TelegramOwnerID,
@@ -133,11 +146,15 @@ func main() {
 	scheduleRepo := postgres.NewSummaryScheduleRepository(db)
 	jobRepo := postgres.NewJobRepository(db)
 	scheduleService := schedules.NewService(cfg.TelegramOwnerID, userRepo, scheduleRepo, jobRepo)
+	serverOptions := httpserver.DefaultOptions()
+	serverOptions.ServiceToken = cfg.ServiceToken
+	serverOptions.RequireAuth = true
+	serverOptions.WriteTimeout = 5 * time.Minute
 	server := httpserver.NewWithOptions(
 		cfg.HTTPAddr,
 		db,
 		logger,
-		httpserver.Options{ServiceToken: cfg.ServiceToken, RequireAuth: true},
+		serverOptions,
 		authService,
 		syncService,
 		groupService,
@@ -148,6 +165,7 @@ func main() {
 		exportService,
 	)
 	server.SetSchedules(scheduleService)
+	server.SetJobs(jobRepo)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Run()

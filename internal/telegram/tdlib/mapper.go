@@ -43,6 +43,29 @@ func mapChat(raw map[string]any, archived bool) domain.TelegramChat {
 	}
 }
 
+func mapChatFolders(raw map[string]any) []domain.TelegramFolder {
+	rawFolders, _ := raw["chat_folders"].([]any)
+	folders := make([]domain.TelegramFolder, 0, len(rawFolders))
+	for _, rawFolder := range rawFolders {
+		folder, ok := rawFolder.(map[string]any)
+		if !ok {
+			continue
+		}
+		folders = append(folders, domain.TelegramFolder{
+			TelegramID: int32(int64Field(folder, "id")),
+			Name:       chatFolderName(nestedMap(folder, "name")),
+		})
+	}
+	return folders
+}
+
+func chatFolderName(raw map[string]any) string {
+	if text := formattedText(nestedMap(raw, "text")); text != "" {
+		return text
+	}
+	return stringField(raw, "title")
+}
+
 func mapChatType(raw map[string]any) domain.ChatType {
 	switch nestedTypeValue(raw) {
 	case "chatTypePrivate":

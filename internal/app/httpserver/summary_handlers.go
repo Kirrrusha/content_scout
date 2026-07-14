@@ -1,9 +1,12 @@
 package httpserver
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
 	"github.com/kirilllebedenko/content_scout/internal/summary"
@@ -22,6 +25,13 @@ type summaryResponse struct {
 	DuplicateCount int   `json:"duplicate_count"`
 }
 
+type summaryTaskResponse struct {
+	JobID       int64  `json:"job_id"`
+	Status      string `json:"status"`
+	JobURL      string `json:"job_url"`
+	Description string `json:"description"`
+}
+
 type summaryItemResponse struct {
 	ID            int64  `json:"id"`
 	JobID         int64  `json:"job_id"`
@@ -35,17 +45,37 @@ type summaryItemResponse struct {
 }
 
 type summaryTopicResponse struct {
-	ID            int64  `json:"id"`
-	SummaryID     int64  `json:"summary_id"`
-	Title         string `json:"title"`
-	ShortSummary  string `json:"short_summary"`
-	FullSummary   string `json:"full_summary"`
-	Category      string `json:"category"`
-	Importance    int    `json:"importance"`
-	Confidence    string `json:"confidence"`
-	MessagesCount int    `json:"messages_count"`
-	SourcesCount  int    `json:"sources_count"`
-	Position      int    `json:"position"`
+	ID            int64                         `json:"id"`
+	SummaryID     int64                         `json:"summary_id"`
+	Title         string                        `json:"title"`
+	ShortSummary  string                        `json:"short_summary"`
+	FullSummary   string                        `json:"full_summary"`
+	Category      string                        `json:"category"`
+	Importance    int                           `json:"importance"`
+	Confidence    string                        `json:"confidence"`
+	MessagesCount int                           `json:"messages_count"`
+	SourcesCount  int                           `json:"sources_count"`
+	Position      int                           `json:"position"`
+	Sources       []summaryTopicSourceResponse  `json:"sources,omitempty"`
+	Messages      []summaryTopicMessageResponse `json:"messages,omitempty"`
+}
+
+type summaryTopicSourceResponse struct {
+	ChatID         int64   `json:"chat_id"`
+	TelegramChatID int64   `json:"telegram_chat_id"`
+	Title          string  `json:"title"`
+	Username       *string `json:"username,omitempty"`
+}
+
+type summaryTopicMessageResponse struct {
+	CollectedMessageID int64  `json:"collected_message_id"`
+	ChatID             int64  `json:"chat_id"`
+	TelegramChatID     int64  `json:"telegram_chat_id"`
+	MessageID          int64  `json:"message_id"`
+	SourceTitle        string `json:"source_title"`
+	SourceURL          string `json:"source_url,omitempty"`
+	ClusterIndex       int    `json:"cluster_index"`
+	IsCanonical        bool   `json:"is_canonical"`
 }
 
 func (s *Server) summaryFromCollection(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +106,54 @@ func (s *Server) summaryFromCollection(w http.ResponseWriter, r *http.Request) {
 		TopicsCount:    result.TopicsCount,
 		MessagesCount:  result.MessagesCount,
 		DuplicateCount: result.DuplicateCount,
+	})
+}
+
+func (s *Server) summaryFromCollectionTask(w http.ResponseWriter, r *http.Request) {
+	if s.jobs == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "jobs are not configured"})
+		return
+	}
+	collectionJobID, ok := pathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	var req summaryFromCollectionRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.TelegramUserID == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "telegram_user_id is required"})
+		return
+	}
+	if req.Format == "" {
+		req.Format = "standard"
+	}
+	payload, err := json.Marshal(domain.JobPayloadSummaryGeneration{
+		TelegramUserID:  req.TelegramUserID,
+		CollectionJobID: collectionJobID,
+		Format:          req.Format,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	key := fmt.Sprintf("summary_generation:%d:%d:%s:%d", req.TelegramUserID, collectionJobID, req.Format, time.Now().UnixNano())
+	job, err := s.jobs.Enqueue(r.Context(), domain.Job{
+		Type:             domain.JobTypeSummaryGeneration,
+		Payload:          payload,
+		DeduplicationKey: &key,
+		MaxAttempts:      1,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, summaryTaskResponse{
+		JobID:       job.ID,
+		Status:      string(job.Status),
+		JobURL:      fmt.Sprintf("/jobs/%d?telegram_user_id=%d", job.ID, req.TelegramUserID),
+		Description: "summary generation task queued",
 	})
 }
 
@@ -195,6 +273,44 @@ func summaryTopicResponses(topics []domain.SummaryTopic) []summaryTopicResponse 
 			MessagesCount: topic.MessagesCount,
 			SourcesCount:  topic.SourcesCount,
 			Position:      topic.Position,
+			Sources:       summaryTopicSourceResponses(topic.Sources),
+			Messages:      summaryTopicMessageResponses(topic.Messages),
+		})
+	}
+	return responses
+}
+
+func summaryTopicSourceResponses(sources []domain.SummaryTopicSource) []summaryTopicSourceResponse {
+	if len(sources) == 0 {
+		return nil
+	}
+	responses := make([]summaryTopicSourceResponse, 0, len(sources))
+	for _, source := range sources {
+		responses = append(responses, summaryTopicSourceResponse{
+			ChatID:         source.ChatID,
+			TelegramChatID: source.TelegramChatID,
+			Title:          source.Title,
+			Username:       source.Username,
+		})
+	}
+	return responses
+}
+
+func summaryTopicMessageResponses(messages []domain.SummaryTopicMessage) []summaryTopicMessageResponse {
+	if len(messages) == 0 {
+		return nil
+	}
+	responses := make([]summaryTopicMessageResponse, 0, len(messages))
+	for _, message := range messages {
+		responses = append(responses, summaryTopicMessageResponse{
+			CollectedMessageID: message.CollectedMessageID,
+			ChatID:             message.ChatID,
+			TelegramChatID:     message.TelegramChatID,
+			MessageID:          message.MessageID,
+			SourceTitle:        message.SourceTitle,
+			SourceURL:          message.SourceURL,
+			ClusterIndex:       message.ClusterIndex,
+			IsCanonical:        message.IsCanonical,
 		})
 	}
 	return responses

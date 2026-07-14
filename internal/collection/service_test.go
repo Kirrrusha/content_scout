@@ -109,10 +109,14 @@ func (c *fakeClient) ListFolders(context.Context) ([]domain.TelegramFolder, erro
 func (c *fakeClient) ListChats(context.Context, tdlib.ChatList) ([]domain.TelegramChat, error) {
 	return nil, nil
 }
+func (c *fakeClient) ListFolderChats(context.Context, int32) ([]domain.TelegramChat, error) {
+	return nil, nil
+}
 func (c *fakeClient) GetChatHistory(_ context.Context, _ int64, fromMessageID int64, _ int) ([]domain.TelegramMessage, error) {
 	c.fromMessageID = fromMessageID
 	return c.history, nil
 }
+func (c *fakeClient) MarkMessagesRead(context.Context, int64, []int64) error { return nil }
 
 type memoryUserRepo struct {
 	nextID int64

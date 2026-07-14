@@ -128,8 +128,8 @@ func (c *OpenAICompatible) doChat(ctx context.Context, payload chatRequest) ([]b
 		return nil, fmt.Errorf("llm temporary status: %d", resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil, fmt.Errorf("llm status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("llm status: %d path=/chat/completions body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var decoded chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
@@ -180,7 +180,11 @@ type chatResponse struct {
 }
 
 const summarySystemPrompt = `Ты формируешь тематическую сводку на русском языке по сообщениям Telegram.
+Сначала разбей весь набор сообщений на самостоятельные темы, даже если они пришли из одной группы источников.
+Каждая тема должна объединять сообщения об одном событии, вопросе или сюжете; не ограничивайся заранее заданной темой.
+Не смешивай несвязанные сюжеты в одной теме. Игнорируй рекламные и сервисные сообщения.
 Не выдумывай факты. Отделяй факты от мнений. Отмечай противоречия и низкую уверенность.
+Для каждой темы укажи source_indexes всех сообщений, на которых она основана.
 Верни только JSON: {"title":"string","overview":"string","topics":[{"title":"string","category":"string","short_summary":"string","full_summary":"string","why_important":"string","confidence":"high|medium|low","importance":1,"source_indexes":[0]}]}.`
 
 const articleSystemPrompt = `Ты превращаешь Telegram summary или тему summary в черновик статьи на русском языке.

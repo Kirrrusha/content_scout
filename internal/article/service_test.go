@@ -15,7 +15,20 @@ func TestConvertTopicCreatesDraftArticle(t *testing.T) {
 	summaries := &fakeSummaries{
 		summary: &domain.Summary{ID: 10, JobID: 50, Title: "Digest", Markdown: "# Digest"},
 		job:     &domain.SummaryJob{ID: 50, UserID: 1, SourceType: domain.SummarySourceTypeCollection, SourceID: 70},
-		topics:  []domain.SummaryTopic{{SummaryID: 10, Title: "Go", ShortSummary: "Short", FullSummary: "Full", Category: "Tech", Position: 1}},
+		topics: []domain.SummaryTopic{{
+			SummaryID:    10,
+			Title:        "Go",
+			ShortSummary: "Short",
+			FullSummary:  "Full",
+			Category:     "Tech",
+			Position:     1,
+			Messages: []domain.SummaryTopicMessage{{
+				TelegramChatID: -100123,
+				MessageID:      900,
+				SourceTitle:    "Golang Digest",
+				SourceURL:      "https://t.me/golang_digest/900",
+			}},
+		}},
 	}
 	collections := &fakeCollections{messages: []domain.CollectedMessage{{
 		JobID:          70,
@@ -25,9 +38,21 @@ func TestConvertTopicCreatesDraftArticle(t *testing.T) {
 		MessageID:      900,
 		Date:           time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC),
 		Text:           "Go release notes",
+	}, {
+		JobID:          70,
+		UserID:         1,
+		ChatID:         6,
+		TelegramChatID: -100999,
+		MessageID:      901,
+		Date:           time.Date(2026, 7, 13, 10, 5, 0, 0, time.UTC),
+		Text:           "Unrelated devops note",
 	}}}
 	username := "golang_digest"
-	chats := &fakeChats{chats: []domain.TelegramChat{{ID: 5, UserID: 1, TelegramChatID: -100123, Title: "Golang Digest", Username: &username}}}
+	otherUsername := "devops_digest"
+	chats := &fakeChats{chats: []domain.TelegramChat{
+		{ID: 5, UserID: 1, TelegramChatID: -100123, Title: "Golang Digest", Username: &username},
+		{ID: 6, UserID: 1, TelegramChatID: -100999, Title: "DevOps Digest", Username: &otherUsername},
+	}}
 	articles := &fakeArticles{}
 	service := NewService(42, users, summaries, collections, chats, articles, fakeConverter{})
 
@@ -44,7 +69,7 @@ func TestConvertTopicCreatesDraftArticle(t *testing.T) {
 	if len(result.Article.Tags) != 3 || result.Article.Tags[0] != "go" {
 		t.Fatalf("tags = %+v", result.Article.Tags)
 	}
-	if result.Sources != 1 || articles.sources[0].SourceURL != "https://t.me/golang_digest/900" {
+	if result.Sources != 1 || len(articles.sources) != 1 || articles.sources[0].SourceURL != "https://t.me/golang_digest/900" {
 		t.Fatalf("sources = %+v", articles.sources)
 	}
 	if articles.created.ContentMarkdown == "" {
@@ -121,6 +146,9 @@ func (f *fakeSummaries) ListSummariesByUser(context.Context, int64, int) ([]doma
 }
 func (f *fakeSummaries) ListTopics(context.Context, int64) ([]domain.SummaryTopic, error) {
 	return f.topics, nil
+}
+func (f *fakeSummaries) DeleteSummariesOlderThan(context.Context, time.Time) (int64, error) {
+	return 0, nil
 }
 
 type fakeCollections struct {

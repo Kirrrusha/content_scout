@@ -36,6 +36,7 @@ type Server struct {
 	articles   ArticleController
 	exports    ExportController
 	schedules  ScheduleController
+	jobs       JobController
 }
 
 type Options struct {
@@ -123,6 +124,11 @@ type ScheduleController interface {
 	ListRuns(ctx context.Context, telegramUserID, scheduleID int64, limit int) ([]domain.ScheduleRun, error)
 }
 
+type JobController interface {
+	Enqueue(ctx context.Context, job domain.Job) (*domain.Job, error)
+	Find(ctx context.Context, jobID int64) (*domain.Job, error)
+}
+
 func New(addr string, db *sql.DB, logger *slog.Logger) *Server {
 	return NewWithAuth(addr, db, logger, nil)
 }
@@ -196,6 +202,8 @@ func NewWithOptions(addr string, db *sql.DB, logger *slog.Logger, options Option
 	mux.HandleFunc("DELETE /groups/{id}/chats/{chatId}", server.groupChatsRemove)
 	mux.HandleFunc("POST /collections/group/{id}", server.collectionGroupCreate)
 	mux.HandleFunc("POST /summaries/from-collection/{id}", server.summaryFromCollection)
+	mux.HandleFunc("POST /summaries/from-collection/{id}/tasks", server.summaryFromCollectionTask)
+	mux.HandleFunc("GET /jobs/{id}", server.jobGet)
 	mux.HandleFunc("GET /summaries", server.summariesList)
 	mux.HandleFunc("GET /summaries/{id}", server.summaryGet)
 	mux.HandleFunc("GET /summaries/{id}/topics", server.summaryTopics)
@@ -216,7 +224,7 @@ func NewWithOptions(addr string, db *sql.DB, logger *slog.Logger, options Option
 	mux.HandleFunc("POST /schedules/{id}/run", server.schedulesRun)
 	mux.HandleFunc("GET /schedules/{id}/runs", server.schedulesRuns)
 
-	handler := server.securityHeaders(server.authenticate(mux))
+	handler := server.logRequests(server.securityHeaders(server.authenticate(mux)))
 	server.httpServer = &http.Server{
 		Addr:              addr,
 		Handler:           handler,
@@ -232,6 +240,10 @@ func (s *Server) SetSchedules(controller ScheduleController) {
 	s.schedules = controller
 }
 
+func (s *Server) SetJobs(controller JobController) {
+	s.jobs = controller
+}
+
 func (s *Server) Run() error {
 	s.logger.Info("api server starting", "addr", s.httpServer.Addr)
 	if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -245,6 +257,66 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("shutdown api server: %w", err)
 	}
 	return nil
+}
+
+func (s *Server) logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(recorder, r)
+		s.logger.Info("http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"query", safeQueryForLog(r.URL.RawQuery),
+			"status", recorder.status,
+			"bytes", recorder.bytes,
+			"duration_ms", time.Since(started).Milliseconds(),
+			"remote_addr", r.RemoteAddr,
+		)
+	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+	wrote  bool
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	if r.wrote {
+		return
+	}
+	r.status = status
+	r.wrote = true
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Write(data []byte) (int, error) {
+	if !r.wrote {
+		r.wrote = true
+	}
+	written, err := r.ResponseWriter.Write(data)
+	r.bytes += written
+	return written, err
+}
+
+func safeQueryForLog(query string) string {
+	if query == "" {
+		return ""
+	}
+	parts := strings.Split(query, "&")
+	for i, part := range parts {
+		key, _, found := strings.Cut(part, "=")
+		if !found {
+			continue
+		}
+		switch strings.ToLower(key) {
+		case "token", "code", "password", "api_key", "apikey":
+			parts[i] = key + "=<redacted>"
+		}
+	}
+	return strings.Join(parts, "&")
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {

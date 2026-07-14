@@ -57,7 +57,7 @@ func New(cfg Config) (*Runtime, error) {
 		closer = func() error { return nil }
 	}
 
-	options := &slog.HandlerOptions{Level: level}
+	options := handlerOptions(level)
 	var handler slog.Handler
 	if strings.EqualFold(cfg.Format, "text") {
 		handler = slog.NewTextHandler(writer, options)
@@ -79,7 +79,19 @@ func (r *Runtime) Close() error {
 }
 
 func Bootstrap(service string) *slog.Logger {
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})).With("service", service)
+	return slog.New(slog.NewJSONHandler(os.Stdout, handlerOptions(slog.LevelInfo))).With("service", service)
+}
+
+func handlerOptions(level slog.Leveler) *slog.HandlerOptions {
+	return &slog.HandlerOptions{
+		Level: level,
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key != slog.TimeKey {
+				return attr
+			}
+			return slog.String(slog.TimeKey, attr.Value.Time().Format(time.RFC3339Nano))
+		},
+	}
 }
 
 func parseLevel(value string) slog.Leveler {

@@ -125,6 +125,7 @@ func (s *Service) convert(ctx context.Context, req ConvertRequest, topicPosition
 	if err != nil {
 		return nil, err
 	}
+	messages, sources = topicScopedSources(topic, messages, sources)
 	input := articleInput(*item, topic, messages, sources, req)
 	converted, err := s.converter.ConvertToArticle(ctx, input)
 	if err != nil {
@@ -204,6 +205,70 @@ func (s *Service) sources(ctx context.Context, userID, summaryJobID int64) ([]do
 	return messages, sources, nil
 }
 
+func topicScopedSources(topic *domain.SummaryTopic, messages []domain.CollectedMessage, sources []domain.ArticleSource) ([]domain.CollectedMessage, []domain.ArticleSource) {
+	if topic == nil {
+		return messages, sources
+	}
+	if len(topic.Messages) > 0 {
+		messagesByKey := make(map[string]domain.CollectedMessage, len(messages))
+		sourcesByKey := make(map[string]domain.ArticleSource, len(sources))
+		for _, message := range messages {
+			messagesByKey[messageKey(message.TelegramChatID, message.MessageID)] = message
+		}
+		for _, source := range sources {
+			sourcesByKey[messageKey(source.TelegramChatID, source.MessageID)] = source
+		}
+		scopedMessages := make([]domain.CollectedMessage, 0, len(topic.Messages))
+		scopedSources := make([]domain.ArticleSource, 0, len(topic.Messages))
+		seen := make(map[string]struct{}, len(topic.Messages))
+		for _, topicMessage := range topic.Messages {
+			key := messageKey(topicMessage.TelegramChatID, topicMessage.MessageID)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			message, hasMessage := messagesByKey[key]
+			source, hasSource := sourcesByKey[key]
+			if !hasSource {
+				source = domain.ArticleSource{
+					TelegramChatID: topicMessage.TelegramChatID,
+					MessageID:      topicMessage.MessageID,
+					SourceTitle:    firstNonEmpty(topicMessage.SourceTitle, "Telegram"),
+					SourceURL:      topicMessage.SourceURL,
+				}
+			}
+			if hasMessage {
+				scopedMessages = append(scopedMessages, message)
+				if source.PublishedAt.IsZero() {
+					source.PublishedAt = message.Date
+				}
+			}
+			scopedSources = append(scopedSources, source)
+		}
+		return scopedMessages, scopedSources
+	}
+	if len(topic.Sources) == 0 {
+		return messages, sources
+	}
+	topicChats := make(map[int64]struct{}, len(topic.Sources))
+	for _, source := range topic.Sources {
+		topicChats[source.TelegramChatID] = struct{}{}
+	}
+	scopedMessages := make([]domain.CollectedMessage, 0, len(messages))
+	for _, message := range messages {
+		if _, ok := topicChats[message.TelegramChatID]; ok {
+			scopedMessages = append(scopedMessages, message)
+		}
+	}
+	scopedSources := make([]domain.ArticleSource, 0, len(sources))
+	for _, source := range sources {
+		if _, ok := topicChats[source.TelegramChatID]; ok {
+			scopedSources = append(scopedSources, source)
+		}
+	}
+	return scopedMessages, scopedSources
+}
+
 func (s *Service) chatMetadata(ctx context.Context, userID int64) (map[int64]string, map[int64]string) {
 	titles := make(map[int64]string)
 	usernames := make(map[int64]string)
@@ -268,10 +333,10 @@ func articleInput(item domain.Summary, topic *domain.SummaryTopic, messages []do
 	}
 	messageByKey := make(map[string]domain.CollectedMessage, len(messages))
 	for _, message := range messages {
-		messageByKey[fmt.Sprintf("%d:%d", message.TelegramChatID, message.MessageID)] = message
+		messageByKey[messageKey(message.TelegramChatID, message.MessageID)] = message
 	}
 	for _, source := range sources {
-		message := messageByKey[fmt.Sprintf("%d:%d", source.TelegramChatID, source.MessageID)]
+		message := messageByKey[messageKey(source.TelegramChatID, source.MessageID)]
 		input.Sources = append(input.Sources, llm.ArticleSourceInput{
 			Title:       source.SourceTitle,
 			URL:         source.SourceURL,
@@ -280,6 +345,10 @@ func articleInput(item domain.Summary, topic *domain.SummaryTopic, messages []do
 		})
 	}
 	return input
+}
+
+func messageKey(telegramChatID, messageID int64) string {
+	return fmt.Sprintf("%d:%d", telegramChatID, messageID)
 }
 
 func articleType(preferred domain.ArticleType, fallback string) domain.ArticleType {

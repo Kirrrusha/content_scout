@@ -25,6 +25,7 @@ const (
 	ActionAuthConnect     = "auth:connect"
 	ActionAuthStatus      = "auth:status"
 	ActionAuthDelete      = "auth:delete"
+	ActionScheduleNew     = "schedule:new"
 )
 
 type Router struct {
@@ -138,7 +139,7 @@ func (r *Router) handleMessage(ctx context.Context, in Incoming) (Outgoing, erro
 	case "group_remove_chat":
 		return r.removeGroupChat(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_remove_chat")))
 	case "group_chats":
-		return r.showGroupChats(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_chats")))
+		return r.showGroupChats(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_chats")), 0, "")
 	case "collect_group":
 		return r.collectGroup(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/collect_group")))
 	case "summarize_collection":
@@ -199,6 +200,21 @@ func (r *Router) handleCallback(ctx context.Context, in Incoming) (Outgoing, err
 		out.CallbackID = in.CallbackID
 		return out, err
 	}
+	if strings.HasPrefix(in.CallbackData, "newsum:") {
+		out, err = r.handleNewSummaryCallback(ctx, in)
+		out.CallbackID = in.CallbackID
+		return out, err
+	}
+	if strings.HasPrefix(in.CallbackData, "sched:") {
+		out, err = r.handleScheduleCallback(ctx, in)
+		out.CallbackID = in.CallbackID
+		return out, err
+	}
+	if strings.HasPrefix(in.CallbackData, "groups:") {
+		out, err = r.handleGroupsCallback(ctx, in)
+		out.CallbackID = in.CallbackID
+		return out, err
+	}
 	if strings.HasPrefix(in.CallbackData, "art:") {
 		out, err = r.handleArticleCallback(ctx, in)
 		out.CallbackID = in.CallbackID
@@ -209,11 +225,16 @@ func (r *Router) handleCallback(ctx context.Context, in Incoming) (Outgoing, err
 		out.CallbackID = in.CallbackID
 		return out, err
 	}
+	if strings.HasPrefix(in.CallbackData, "chats:page:") {
+		out, err = r.handleChatsCallback(ctx, in)
+		out.CallbackID = in.CallbackID
+		return out, err
+	}
 	switch in.CallbackData {
 	case ActionBackHome:
 		out, err = r.showHome(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Открыто главное меню.")
 	case ActionNewSummary:
-		out, err = r.showPlaceholder(ctx, in.ChatID, in.UserID, ViewNewSummary, "Создание сводки будет запускаться через фоновые задачи в одном из следующих PR.", in.CallbackMessage, "Раздел сводки открыт.")
+		out, err = r.showNewSummary(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Раздел сводки открыт.")
 	case ActionFolders:
 		out, err = r.showFolders(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Раздел папок открыт.")
 	case ActionGroups:
@@ -226,6 +247,8 @@ func (r *Router) handleCallback(ctx context.Context, in Incoming) (Outgoing, err
 		out, err = r.showArticles(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Статьи открыты.")
 	case ActionSchedules:
 		out, err = r.showSchedules(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Расписания открыты.")
+	case ActionScheduleNew:
+		out, err = r.showScheduleGroupPicker(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Создание расписания.")
 	case ActionSettings:
 		out, err = r.showSettings(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Настройки открыты.")
 	case ActionAuthConnect:
@@ -289,6 +312,27 @@ func MainMenu() Menu {
 
 func BackMenu() Menu {
 	return Menu{{{Text: "Назад", Data: ActionBackHome}}}
+}
+
+func unknownCallback(in Incoming) Outgoing {
+	return Outgoing{ChatID: in.ChatID, Text: "Неизвестное действие.", AnswerCallback: "Неизвестное действие."}
+}
+
+func chatsMenu(page, total int) Menu {
+	page = clampChatsPage(page, total)
+	menu := Menu{}
+	if total > chatsPageSize {
+		row := []MenuButton{}
+		if page > 0 {
+			row = append(row, MenuButton{Text: "Предыдущие 30", Data: fmt.Sprintf("chats:page:%d", page-1)})
+		}
+		if page < chatsPages(total)-1 {
+			row = append(row, MenuButton{Text: "Следующие 30", Data: fmt.Sprintf("chats:page:%d", page+1)})
+		}
+		menu = append(menu, row)
+	}
+	menu = append(menu, []MenuButton{{Text: "Назад", Data: ActionBackHome}})
+	return menu
 }
 
 func SettingsMenu() Menu {
@@ -379,6 +423,9 @@ func (r *Router) submitPhone(ctx context.Context, chatID, userID int64, phone st
 	if phone == "" {
 		return Outgoing{ChatID: chatID, Text: "Введите номер телефона после команды /phone или отдельным сообщением.", Menu: BackMenu()}, nil
 	}
+	if !strings.HasPrefix(phone, "+") {
+		return Outgoing{ChatID: chatID, Text: "Введите номер телефона в международном формате с плюсом, например +79204675533.", Menu: BackMenu()}, nil
+	}
 	status, err := r.auth.SubmitPhoneNumber(ctx, userID, phone)
 	if err != nil {
 		return Outgoing{ChatID: chatID, Text: publicAuthError(err), Menu: SettingsMenu()}, nil
@@ -390,14 +437,11 @@ func (r *Router) submitCode(ctx context.Context, chatID, userID int64, code stri
 	if r.auth == nil {
 		return Outgoing{ChatID: chatID, Text: "Авторизация TDLib пока не настроена.", Menu: SettingsMenu()}, nil
 	}
-	if code == "" {
-		return Outgoing{ChatID: chatID, Text: "Введите код после команды /code или отдельным сообщением.", Menu: BackMenu()}, nil
-	}
-	status, err := r.auth.SubmitCode(ctx, userID, code)
-	if err != nil {
-		return Outgoing{ChatID: chatID, Text: publicAuthError(err), Menu: SettingsMenu()}, nil
-	}
-	return r.showAuthPrompt(ctx, chatID, userID, status, 0, "")
+	return Outgoing{
+		ChatID: chatID,
+		Text:   "Не отправляйте код подтверждения в Telegram-чат. Telegram может заблокировать вход как раскрытие кода. Передайте код через защищенный HTTP API /telegram/auth/code или локальный админ-интерфейс.",
+		Menu:   BackMenu(),
+	}, nil
 }
 
 func (r *Router) submitPassword(ctx context.Context, chatID, userID int64, password string) (Outgoing, error) {
@@ -461,6 +505,19 @@ func (r *Router) showFolders(ctx context.Context, chatID, userID int64, editMess
 }
 
 func (r *Router) showChats(ctx context.Context, chatID, userID int64, editMessageID int, callbackAnswer string) (Outgoing, error) {
+	return r.showChatsPage(ctx, chatID, userID, 0, editMessageID, callbackAnswer)
+}
+
+func (r *Router) handleChatsCallback(ctx context.Context, in Incoming) (Outgoing, error) {
+	rawPage := strings.TrimPrefix(in.CallbackData, "chats:page:")
+	page, err := strconv.Atoi(rawPage)
+	if err != nil {
+		return Outgoing{ChatID: in.ChatID, Text: "Неизвестное действие.", AnswerCallback: "Неизвестное действие."}, nil
+	}
+	return r.showChatsPage(ctx, in.ChatID, in.UserID, page, in.CallbackMessage, fmt.Sprintf("Страница %d", page+1))
+}
+
+func (r *Router) showChatsPage(ctx context.Context, chatID, userID int64, page, editMessageID int, callbackAnswer string) (Outgoing, error) {
 	if r.sync == nil {
 		return Outgoing{ChatID: chatID, Text: "Синхронизация Telegram пока не настроена.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 	}
@@ -471,7 +528,8 @@ func (r *Router) showChats(ctx context.Context, chatID, userID int64, editMessag
 	if err := r.states.Set(ctx, userID, DialogState{View: ViewSelectedSources}); err != nil {
 		return Outgoing{}, fmt.Errorf("set dialog state: %w", err)
 	}
-	return Outgoing{ChatID: chatID, Text: chatsText(chats), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	page = clampChatsPage(page, len(chats))
+	return Outgoing{ChatID: chatID, Text: chatsPageText(chats, page), Menu: chatsMenu(page, len(chats)), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 }
 
 func (r *Router) showGroups(ctx context.Context, chatID, userID int64, editMessageID int, callbackAnswer string) (Outgoing, error) {
@@ -485,7 +543,7 @@ func (r *Router) showGroups(ctx context.Context, chatID, userID int64, editMessa
 	if err := r.states.Set(ctx, userID, DialogState{View: ViewGroups}); err != nil {
 		return Outgoing{}, fmt.Errorf("set dialog state: %w", err)
 	}
-	return Outgoing{ChatID: chatID, Text: groupsText(groups), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	return Outgoing{ChatID: chatID, Text: groupsText(groups), Menu: groupsMenu(groups), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 }
 
 func (r *Router) createGroup(ctx context.Context, chatID, userID int64, raw string) (Outgoing, error) {
@@ -587,19 +645,43 @@ func (r *Router) removeGroupChat(ctx context.Context, chatID, userID int64, raw 
 	return Outgoing{ChatID: chatID, Text: "Источник удален из группы.", Menu: BackMenu()}, nil
 }
 
-func (r *Router) showGroupChats(ctx context.Context, chatID, userID int64, raw string) (Outgoing, error) {
+func (r *Router) showGroupChats(ctx context.Context, chatID, userID int64, raw string, editMessageID int, callbackAnswer string) (Outgoing, error) {
 	if r.groups == nil {
-		return Outgoing{ChatID: chatID, Text: "Группы источников пока не настроены.", Menu: BackMenu()}, nil
+		return Outgoing{ChatID: chatID, Text: "Группы источников пока не настроены.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 	}
 	groupID, err := parseID(strings.TrimSpace(raw))
 	if err != nil {
-		return Outgoing{ChatID: chatID, Text: "Использование: /group_chats <id>", Menu: BackMenu()}, nil
+		return Outgoing{ChatID: chatID, Text: "Использование: /group_chats <id>", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 	}
 	group, err := r.groups.ListChats(ctx, userID, groupID)
 	if err != nil {
-		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu()}, nil
+		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 	}
-	return Outgoing{ChatID: chatID, Text: groupChatsText(group), Menu: BackMenu()}, nil
+	return Outgoing{ChatID: chatID, Text: groupChatsText(group), Menu: groupDetailsMenu(groupID), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+}
+
+func (r *Router) handleGroupsCallback(ctx context.Context, in Incoming) (Outgoing, error) {
+	fields := strings.Split(in.CallbackData, ":")
+	if len(fields) < 2 {
+		return unknownCallback(in), nil
+	}
+	switch fields[1] {
+	case "list":
+		return r.showGroups(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Раздел групп открыт.")
+	case "open":
+		if len(fields) != 3 {
+			return unknownCallback(in), nil
+		}
+		groupID, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil || groupID <= 0 {
+			return Outgoing{ChatID: in.ChatID, Text: "Неизвестная группа.", AnswerCallback: "Неизвестная группа."}, nil
+		}
+		return r.showGroupChats(ctx, in.ChatID, in.UserID, strconv.FormatInt(groupID, 10), in.CallbackMessage, "Группа открыта.")
+	case "sync":
+		return r.syncTelegram(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Синхронизирую.")
+	default:
+		return unknownCallback(in), nil
+	}
 }
 
 func (r *Router) collectGroup(ctx context.Context, chatID, userID int64, raw string) (Outgoing, error) {
@@ -660,7 +742,7 @@ func (r *Router) summarizeCollection(ctx context.Context, chatID, userID int64, 
 		Format:          format,
 	})
 	if err != nil {
-		return Outgoing{ChatID: chatID, Text: publicGroupError(err), Menu: BackMenu()}, nil
+		return Outgoing{ChatID: chatID, Text: publicGroupError(fmt.Errorf("summarize with llm: %w", err)), Menu: BackMenu()}, nil
 	}
 	return Outgoing{ChatID: chatID, Text: summaryResultText(result), Menu: BackMenu()}, nil
 }

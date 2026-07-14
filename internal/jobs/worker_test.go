@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
+	"github.com/kirilllebedenko/content_scout/internal/summary"
 )
 
 func TestWorkerCompletesClaimedJob(t *testing.T) {
@@ -22,6 +24,27 @@ func TestWorkerCompletesClaimedJob(t *testing.T) {
 	}
 	if !claimed || repo.completedID != 1 {
 		t.Fatalf("claimed=%v completed=%d", claimed, repo.completedID)
+	}
+}
+
+func TestWorkerStoresHandlerResult(t *testing.T) {
+	repo := &fakeJobRepo{job: &domain.Job{ID: 4, Type: domain.JobTypeSummaryGeneration, Attempt: 1, Payload: []byte(`{"telegram_user_id":42,"collection_job_id":10}`)}}
+	handler := SummaryGenerationHandler{Summarizer: &fakeSummaryGenerator{result: &summaryResultFixture}}
+	worker := NewWorker(repo, handler, discardLogger(), "worker-1")
+
+	claimed, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if !claimed || repo.completedID != 4 {
+		t.Fatalf("claimed=%v completed=%d", claimed, repo.completedID)
+	}
+	var result domain.JobResultSummaryGeneration
+	if err := json.Unmarshal(repo.completedResult, &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if result.SummaryID != 20 || result.TopicsCount != 3 {
+		t.Fatalf("result = %+v", result)
 	}
 }
 
@@ -68,11 +91,12 @@ func TestScheduledPipelineHandlerRunsSchedule(t *testing.T) {
 }
 
 type fakeJobRepo struct {
-	job         *domain.Job
-	completedID int64
-	retryID     int64
-	retryAt     time.Time
-	deadID      int64
+	job             *domain.Job
+	completedID     int64
+	completedResult []byte
+	retryID         int64
+	retryAt         time.Time
+	deadID          int64
 }
 
 func discardLogger() *slog.Logger {
@@ -83,6 +107,10 @@ func (f *fakeJobRepo) Enqueue(context.Context, domain.Job) (*domain.Job, error) 
 	return nil, nil
 }
 
+func (f *fakeJobRepo) Find(context.Context, int64) (*domain.Job, error) {
+	return nil, nil
+}
+
 func (f *fakeJobRepo) ClaimNext(context.Context, string, time.Duration) (*domain.Job, error) {
 	job := f.job
 	f.job = nil
@@ -90,7 +118,12 @@ func (f *fakeJobRepo) ClaimNext(context.Context, string, time.Duration) (*domain
 }
 
 func (f *fakeJobRepo) Complete(_ context.Context, jobID int64) error {
+	return f.CompleteWithResult(context.Background(), jobID, nil)
+}
+
+func (f *fakeJobRepo) CompleteWithResult(_ context.Context, jobID int64, result []byte) error {
 	f.completedID = jobID
+	f.completedResult = append([]byte(nil), result...)
 	return nil
 }
 
@@ -120,4 +153,22 @@ type fakePipelineScheduler struct {
 func (f *fakePipelineScheduler) RunSchedule(_ context.Context, schedule domain.SummarySchedule) error {
 	f.schedule = schedule
 	return nil
+}
+
+var summaryResultFixture = summary.GenerateResult{
+	SummaryID:      20,
+	SummaryJobID:   30,
+	TopicsCount:    3,
+	MessagesCount:  12,
+	DuplicateCount: 2,
+}
+
+type fakeSummaryGenerator struct {
+	request summary.GenerateRequest
+	result  *summary.GenerateResult
+}
+
+func (f *fakeSummaryGenerator) GenerateFromCollection(_ context.Context, req summary.GenerateRequest) (*summary.GenerateResult, error) {
+	f.request = req
+	return f.result, nil
 }

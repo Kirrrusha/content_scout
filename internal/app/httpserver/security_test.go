@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
@@ -66,6 +67,24 @@ func TestSecurityMiddlewareLimitsRequestBody(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRequestLoggingRecordsMethodPathStatusAndRedactsQuery(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	server := NewWithOptions(":0", nil, logger, Options{ServiceToken: "secret", RequireAuth: true}, nil, nil, nil, nil, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/health?token=secret&foo=bar", nil)
+	rec := httptest.NewRecorder()
+
+	server.httpServer.Handler.ServeHTTP(rec, req)
+
+	logs := buf.String()
+	if !strings.Contains(logs, "msg=\"http request\"") || !strings.Contains(logs, "method=GET") || !strings.Contains(logs, "path=/health") || !strings.Contains(logs, "status=200") {
+		t.Fatalf("logs = %q", logs)
+	}
+	if strings.Contains(logs, "token=secret") || !strings.Contains(logs, "token=<redacted>") {
+		t.Fatalf("query was not redacted: %q", logs)
 	}
 }
 

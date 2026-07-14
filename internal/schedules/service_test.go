@@ -150,7 +150,9 @@ func (f *fakeJobQueue) ClaimNext(context.Context, string, time.Duration) (*domai
 	return nil, nil
 }
 
+func (f *fakeJobQueue) Find(context.Context, int64) (*domain.Job, error)               { return nil, nil }
 func (f *fakeJobQueue) Complete(context.Context, int64) error                           { return nil }
+func (f *fakeJobQueue) CompleteWithResult(context.Context, int64, []byte) error         { return nil }
 func (f *fakeJobQueue) Retry(context.Context, int64, time.Time, string) error           { return nil }
 func (f *fakeJobQueue) Dead(context.Context, int64, string) error                       { return nil }
 func (f *fakeJobQueue) RecoverExpiredLeases(context.Context) (int64, error)             { return 0, nil }

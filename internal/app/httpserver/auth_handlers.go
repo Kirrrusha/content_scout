@@ -137,6 +137,12 @@ func (s *Server) writeAuthError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
+	if tdlib.IsLoginCodeCompromisedError(err) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "telegram login was blocked because the confirmation code was considered exposed; restart authorization and submit the next code outside Telegram chat",
+		})
+		return
+	}
 	writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 }
 

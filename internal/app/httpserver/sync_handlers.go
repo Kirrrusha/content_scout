@@ -45,6 +45,7 @@ func (s *Server) telegramSync(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.sync.Sync(r.Context(), req.TelegramUserID)
 	if err != nil {
+		s.logger.Error("telegram sync failed", "telegram_user_id", req.TelegramUserID, "error", err)
 		s.writeAuthError(w, err)
 		return
 	}

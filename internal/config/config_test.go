@@ -72,8 +72,59 @@ func TestLoadParsesLoggingConfig(t *testing.T) {
 	}
 }
 
+func TestLoadParsesSummaryRetention(t *testing.T) {
+	t.Setenv("SUMMARY_RETENTION", "720")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SummaryRetention != 30*24*time.Hour {
+		t.Fatalf("SummaryRetention = %s, want 720h", cfg.SummaryRetention)
+	}
+}
+
+func TestLoadParsesLLMTimeout(t *testing.T) {
+	t.Setenv("LLM_TIMEOUT", "5m")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.LLMTimeout != 5*time.Minute {
+		t.Fatalf("LLMTimeout = %s, want 5m", cfg.LLMTimeout)
+	}
+}
+
 func TestLoadRejectsInvalidLoggingDuration(t *testing.T) {
 	t.Setenv("LOG_RETENTION", "not-a-duration")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want error")
+	}
+}
+
+func TestLoadRejectsInvalidSummaryRetention(t *testing.T) {
+	t.Setenv("SUMMARY_RETENTION", "not-a-number")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want error")
+	}
+}
+
+func TestLoadRejectsNegativeSummaryRetention(t *testing.T) {
+	t.Setenv("SUMMARY_RETENTION", "-1")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want error")
+	}
+}
+
+func TestLoadRejectsInvalidLLMTimeout(t *testing.T) {
+	t.Setenv("LLM_TIMEOUT", "not-a-duration")
 
 	_, err := Load()
 	if err == nil {

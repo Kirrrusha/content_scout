@@ -1,5 +1,6 @@
 FROM debian:bookworm-slim AS tdlib
 ARG TDLIB_GIT_REF=master
+ARG TDLIB_BUILD_JOBS=2
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -15,7 +16,7 @@ RUN cmake -S /td -B /td/build \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DTD_ENABLE_JNI=OFF \
-    && cmake --build /td/build --target install -j"$(nproc)"
+    && cmake --build /td/build --target install -j"${TDLIB_BUILD_JOBS}"
 
 FROM golang:1.25-bookworm AS build
 WORKDIR /src

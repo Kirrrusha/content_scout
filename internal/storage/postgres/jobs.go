@@ -37,9 +37,25 @@ func (r *JobRepository) Enqueue(ctx context.Context, job domain.Job) (*domain.Jo
 		ON CONFLICT (deduplication_key) WHERE deduplication_key IS NOT NULL AND status IN ('pending', 'running', 'retry_wait')
 		DO UPDATE SET deduplication_key = EXCLUDED.deduplication_key
 		RETURNING id, type, status, payload, attempt, max_attempts, available_at, locked_at, locked_by,
-			lease_expires_at, last_error, created_at, started_at, finished_at, deduplication_key
+			lease_expires_at, last_error, created_at, started_at, finished_at, deduplication_key, result
 	`
 	return scanJob(r.db.QueryRowContext(ctx, query, job.Type, job.Status, job.Payload, job.MaxAttempts, job.AvailableAt, nullString(job.DeduplicationKey)))
+}
+
+func (r *JobRepository) Find(ctx context.Context, jobID int64) (*domain.Job, error) {
+	job, err := scanJob(r.db.QueryRowContext(ctx, `
+		SELECT id, type, status, payload, attempt, max_attempts, available_at, locked_at, locked_by,
+			lease_expires_at, last_error, created_at, started_at, finished_at, deduplication_key, result
+		FROM jobs
+		WHERE id = $1
+	`, jobID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find job: %w", err)
+	}
+	return job, nil
 }
 
 func (r *JobRepository) ClaimNext(ctx context.Context, workerID string, lease time.Duration) (*domain.Job, error) {
@@ -80,7 +96,7 @@ func (r *JobRepository) ClaimNext(ctx context.Context, workerID string, lease ti
 			last_error = NULL
 		WHERE id = $3
 		RETURNING id, type, status, payload, attempt, max_attempts, available_at, locked_at, locked_by,
-			lease_expires_at, last_error, created_at, started_at, finished_at, deduplication_key
+			lease_expires_at, last_error, created_at, started_at, finished_at, deduplication_key, result
 	`, workerID, intervalString(lease), id))
 	if err != nil {
 		return nil, fmt.Errorf("update claimed job: %w", err)
@@ -92,6 +108,13 @@ func (r *JobRepository) ClaimNext(ctx context.Context, workerID string, lease ti
 }
 
 func (r *JobRepository) Complete(ctx context.Context, jobID int64) error {
+	return r.CompleteWithResult(ctx, jobID, nil)
+}
+
+func (r *JobRepository) CompleteWithResult(ctx context.Context, jobID int64, result []byte) error {
+	if len(result) == 0 {
+		result = []byte(`{}`)
+	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE jobs
 		SET status = 'completed',
@@ -99,9 +122,10 @@ func (r *JobRepository) Complete(ctx context.Context, jobID int64) error {
 			locked_by = NULL,
 			lease_expires_at = NULL,
 			finished_at = now(),
-			last_error = NULL
+			last_error = NULL,
+			result = $2
 		WHERE id = $1
-	`, jobID)
+	`, jobID, result)
 	if err != nil {
 		return fmt.Errorf("complete job: %w", err)
 	}
@@ -185,6 +209,7 @@ func scanJob(row interface{ Scan(dest ...any) error }) (*domain.Job, error) {
 	var startedAt sql.NullTime
 	var finishedAt sql.NullTime
 	var deduplicationKey sql.NullString
+	var result []byte
 	if err := row.Scan(
 		&job.ID,
 		&job.Type,
@@ -201,6 +226,7 @@ func scanJob(row interface{ Scan(dest ...any) error }) (*domain.Job, error) {
 		&startedAt,
 		&finishedAt,
 		&deduplicationKey,
+		&result,
 	); err != nil {
 		return nil, err
 	}
@@ -211,6 +237,10 @@ func scanJob(row interface{ Scan(dest ...any) error }) (*domain.Job, error) {
 	job.StartedAt = timePtr(startedAt)
 	job.FinishedAt = timePtr(finishedAt)
 	job.DeduplicationKey = stringPtr(deduplicationKey)
+	job.Result = result
+	if len(job.Result) == 0 {
+		job.Result = []byte(`{}`)
+	}
 	return &job, nil
 }
 

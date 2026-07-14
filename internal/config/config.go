@@ -13,11 +13,13 @@ type Config struct {
 	HTTPAddr         string
 	DatabaseURL      string
 	ServiceToken     string
+	InternalAPIURL   string
 	LogFormat        string
 	LogLevel         string
 	LogDir           string
 	LogRetention     time.Duration
 	LogRotation      time.Duration
+	SummaryRetention time.Duration
 	WorkerID         string
 	TelegramBotToken string
 	TelegramOwnerID  int64
@@ -28,6 +30,7 @@ type Config struct {
 	LLMBaseURL       string
 	LLMAPIKey        string
 	LLMModel         string
+	LLMTimeout       time.Duration
 	EncryptionKey    string
 	ExportDir        string
 	ObsidianRESTURL  string
@@ -41,6 +44,7 @@ func Load() (Config, error) {
 		HTTPAddr:         getEnv("HTTP_ADDR", ":8080"),
 		DatabaseURL:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/telegram_summary?sslmode=disable"),
 		ServiceToken:     os.Getenv("SERVICE_TOKEN"),
+		InternalAPIURL:   getEnv("INTERNAL_API_URL", "http://127.0.0.1:8080"),
 		LogFormat:        getEnv("LOG_FORMAT", "json"),
 		LogLevel:         getEnv("LOG_LEVEL", "info"),
 		LogDir:           getEnv("LOG_DIR", "./data/logs"),
@@ -79,6 +83,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	cfg.SummaryRetention, err = parseHoursEnv("SUMMARY_RETENTION", 0)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.LLMTimeout, err = parseDurationEnv("LLM_TIMEOUT", 3*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
 
 	if cfg.HTTPAddr == "" {
 		return Config{}, errors.New("HTTP_ADDR must not be empty")
@@ -99,6 +111,21 @@ func parseDurationEnv(key string, fallback time.Duration) (time.Duration, error)
 		return 0, fmt.Errorf("parse %s: %w", key, err)
 	}
 	return parsed, nil
+}
+
+func parseHoursEnv(key string, fallback time.Duration) (time.Duration, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s as hours: %w", key, err)
+	}
+	if parsed < 0 {
+		return 0, fmt.Errorf("parse %s as hours: value must be non-negative", key)
+	}
+	return time.Duration(parsed) * time.Hour, nil
 }
 
 func parseBoolEnv(key string, fallback bool) (bool, error) {

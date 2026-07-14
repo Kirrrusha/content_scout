@@ -1,13 +1,20 @@
 GO ?= go
 DOCKER_COMPOSE ?= docker compose
 
+BREW_PREFIX ?= $(shell brew --prefix 2>/dev/null)
+TDLIB_CGO_LDFLAGS ?= $(if $(BREW_PREFIX),-L$(BREW_PREFIX)/lib,)
+LOCAL_DATABASE_URL ?= postgres://postgres:postgres@127.0.0.1:5432/telegram_summary?sslmode=disable
+LOCAL_TDLIB_DATABASE_DIR ?= ./data/tdlib
+LOAD_ENV = set -a; [ ! -f .env ] || . ./.env; set +a
+
 .PHONY: build build-tdlib test test-tdlib-nocgo test-tdlib-integration lint migrate-up migrate-down run-api run-bot run-tdlib run-worker docker-up docker-down
 
 build:
 	$(GO) build ./cmd/...
 
 build-tdlib:
-	CGO_ENABLED=1 $(GO) build -tags tdlib ./cmd/api ./cmd/bot ./cmd/tdlib-worker
+	CGO_ENABLED=1 CGO_LDFLAGS="$(TDLIB_CGO_LDFLAGS)" $(GO) build -tags tdlib ./cmd/api ./cmd/tdlib-worker
+	CGO_ENABLED=0 $(GO) build ./cmd/bot
 
 test:
 	$(GO) test ./...
@@ -28,16 +35,16 @@ migrate-down:
 	$(GO) run ./cmd/migrate -direction down -dir migrations
 
 run-api:
-	$(GO) run ./cmd/api
+	$(LOAD_ENV); DATABASE_URL="$(LOCAL_DATABASE_URL)" TDLIB_DATABASE_DIR="$(LOCAL_TDLIB_DATABASE_DIR)" CGO_ENABLED=1 CGO_LDFLAGS="$(TDLIB_CGO_LDFLAGS)" $(GO) run -tags tdlib ./cmd/api
 
 run-bot:
-	$(GO) run ./cmd/bot
+	$(LOAD_ENV); DATABASE_URL="$(LOCAL_DATABASE_URL)" CGO_ENABLED=0 $(GO) run ./cmd/bot
 
 run-tdlib:
-	$(GO) run ./cmd/tdlib-worker
+	$(LOAD_ENV); TDLIB_DATABASE_DIR="$(LOCAL_TDLIB_DATABASE_DIR)" CGO_ENABLED=1 CGO_LDFLAGS="$(TDLIB_CGO_LDFLAGS)" $(GO) run -tags tdlib ./cmd/tdlib-worker
 
 run-worker:
-	$(GO) run ./cmd/summary-worker
+	$(LOAD_ENV); DATABASE_URL="$(LOCAL_DATABASE_URL)" $(GO) run ./cmd/summary-worker
 
 docker-up:
 	cp -n .env.example .env || true

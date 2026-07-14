@@ -22,20 +22,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
 )
 
 type NativeClient struct {
-	cfg         ClientConfig
-	sessionPath string
-	handle      unsafe.Pointer
-	mu          sync.Mutex
-	extraSeq    atomic.Uint64
-	authState   AuthorizationState
+	cfg          ClientConfig
+	sessionPath  string
+	handle       unsafe.Pointer
+	mu           sync.Mutex
+	extraSeq     atomic.Uint64
+	authState    AuthorizationState
+	rawAuthState string
+	folders      []domain.TelegramFolder
+	haveFolders  bool
 }
 
 func NewNativeClient(cfg ClientConfig, sessionPath string) *NativeClient {
@@ -65,6 +71,7 @@ func (c *NativeClient) Stop(ctx context.Context) error {
 	}
 	_, err := c.sendAndWait(ctx, map[string]any{"@type": "close"})
 	c.authState = AuthorizationStateClosed
+	c.rawAuthState = "authorizationStateClosed"
 	C.td_json_client_destroy(c.handle)
 	c.handle = nil
 	return err
@@ -113,33 +120,39 @@ func (c *NativeClient) ListFolders(ctx context.Context) ([]domain.TelegramFolder
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	response, err := c.sendAndWait(ctx, map[string]any{"@type": "getChatFolders"})
-	if err != nil {
+	if c.haveFolders {
+		return cloneFolders(c.folders), nil
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := c.waitChatFolders(waitCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		return nil, err
 	}
-	rawFolders, _ := response["chat_folders"].([]any)
-	folders := make([]domain.TelegramFolder, 0, len(rawFolders))
-	for _, rawFolder := range rawFolders {
-		folder, ok := rawFolder.(map[string]any)
-		if !ok {
-			continue
-		}
-		folders = append(folders, domain.TelegramFolder{
-			TelegramID: int32(int64Field(folder, "id")),
-			Name:       stringField(folder, "title"),
-		})
-	}
-	return folders, nil
+	return cloneFolders(c.folders), nil
 }
 
 func (c *NativeClient) ListChats(ctx context.Context, list ChatList) ([]domain.TelegramChat, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.listChatsLocked(ctx, tdlibChatList(list), list == ChatListArchive)
+}
+
+func (c *NativeClient) ListFolderChats(ctx context.Context, folderID int32) ([]domain.TelegramChat, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.listChatsLocked(ctx, tdlibFolderChatList(folderID), false)
+}
+
+func (c *NativeClient) listChatsLocked(ctx context.Context, chatList map[string]any, archived bool) ([]domain.TelegramChat, error) {
+	if err := c.loadChats(ctx, chatList); err != nil {
+		return nil, err
+	}
 	response, err := c.sendAndWait(ctx, map[string]any{
 		"@type":     "getChats",
-		"chat_list": tdlibChatList(list),
-		"limit":     1000,
+		"chat_list": chatList,
+		"limit":     10000,
 	})
 	if err != nil {
 		return nil, err
@@ -151,13 +164,30 @@ func (c *NativeClient) ListChats(ctx context.Context, list ChatList) ([]domain.T
 		if chatID == 0 {
 			continue
 		}
-		chat, err := c.getChat(ctx, chatID, list == ChatListArchive)
+		chat, err := c.getChat(ctx, chatID, archived)
 		if err != nil {
 			return nil, err
 		}
 		chats = append(chats, chat)
 	}
 	return chats, nil
+}
+
+func (c *NativeClient) loadChats(ctx context.Context, chatList map[string]any) error {
+	for {
+		_, err := c.sendAndWait(ctx, map[string]any{
+			"@type":     "loadChats",
+			"chat_list": chatList,
+			"limit":     100,
+		})
+		if err == nil {
+			continue
+		}
+		if isChatsFullyLoadedError(err) {
+			return nil
+		}
+		return fmt.Errorf("load telegram chats: %w", err)
+	}
 }
 
 func (c *NativeClient) GetChatHistory(ctx context.Context, chatID int64, _ int64, limit int) ([]domain.TelegramMessage, error) {
@@ -190,12 +220,42 @@ func (c *NativeClient) GetChatHistory(ctx context.Context, chatID int64, _ int64
 	return messages, nil
 }
 
+func (c *NativeClient) MarkMessagesRead(ctx context.Context, chatID int64, messageIDs []int64) error {
+	if len(messageIDs) == 0 {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	rawIDs := make([]any, 0, len(messageIDs))
+	for _, messageID := range messageIDs {
+		if messageID > 0 {
+			rawIDs = append(rawIDs, messageID)
+		}
+	}
+	if len(rawIDs) == 0 {
+		return nil
+	}
+	_, err := c.sendAndWait(ctx, map[string]any{
+		"@type":       "viewMessages",
+		"chat_id":     chatID,
+		"message_ids": rawIDs,
+		"force_read":  true,
+	})
+	return err
+}
+
 func (c *NativeClient) submitAuth(ctx context.Context, request map[string]any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if err := c.ensureHandle(); err != nil {
 		return err
+	}
+	if c.authState == AuthorizationStateUnknown {
+		if err := c.advanceAuthorization(ctx); err != nil {
+			return err
+		}
 	}
 	if _, err := c.sendAndWait(ctx, request); err != nil {
 		return err
@@ -223,6 +283,8 @@ func (c *NativeClient) ensureHandle() error {
 	if c.handle == nil {
 		return errors.New("create tdlib json client")
 	}
+	c.authState = AuthorizationStateUnknown
+	c.rawAuthState = ""
 	c.execute(map[string]any{
 		"@type":               "setLogVerbosityLevel",
 		"new_verbosity_level": 2,
@@ -232,19 +294,21 @@ func (c *NativeClient) ensureHandle() error {
 
 func (c *NativeClient) advanceAuthorization(ctx context.Context) error {
 	for {
-		response, err := c.sendAndWait(ctx, map[string]any{"@type": "getAuthorizationState"})
-		if err != nil {
-			return err
+		rawState := c.rawAuthState
+		if rawState == "" {
+			var err error
+			rawState, err = c.waitAuthorizationState(ctx)
+			if err != nil {
+				return err
+			}
 		}
-		rawState := rawAuthorizationState(response)
-		c.updateAuthorizationFrom(response)
 		switch rawState {
 		case "authorizationStateWaitTdlibParameters":
-			if _, err := c.sendAndWait(ctx, c.tdlibParameters()); err != nil {
+			if err := c.sendAuthTransition(ctx, c.tdlibParameters()); err != nil {
 				return err
 			}
 		case "authorizationStateWaitEncryptionKey":
-			if _, err := c.sendAndWait(ctx, map[string]any{
+			if err := c.sendAuthTransition(ctx, map[string]any{
 				"@type":          "checkDatabaseEncryptionKey",
 				"encryption_key": "",
 			}); err != nil {
@@ -253,13 +317,79 @@ func (c *NativeClient) advanceAuthorization(ctx context.Context) error {
 		case "authorizationStateReady", "authorizationStateWaitPhoneNumber", "authorizationStateWaitCode", "authorizationStateWaitPassword", "authorizationStateClosed", "authorizationStateClosing", "authorizationStateLoggingOut":
 			return nil
 		default:
-			update, err := c.receive(ctx)
-			if err != nil {
-				return err
-			}
-			c.updateAuthorizationFrom(update)
+			c.rawAuthState = ""
 		}
 	}
+}
+
+func (c *NativeClient) sendAuthTransition(ctx context.Context, request map[string]any) error {
+	if err := c.send(ctx, request); err != nil {
+		return err
+	}
+	c.authState = AuthorizationStateUnknown
+	c.rawAuthState = ""
+	return nil
+}
+
+func (c *NativeClient) waitAuthorizationState(ctx context.Context) (string, error) {
+	for {
+		response, err := c.receive(ctx)
+		if err != nil {
+			return "", err
+		}
+		if stringField(response, "@type") == "error" {
+			return "", &TDLibError{Code: intField(response, "code"), Message: stringField(response, "message")}
+		}
+		rawState := rawAuthorizationState(response)
+		c.updateAuthorizationFrom(response)
+		if isRawAuthorizationState(rawState) {
+			return rawState, nil
+		}
+	}
+}
+
+func (c *NativeClient) waitChatFolders(ctx context.Context) error {
+	for !c.haveFolders {
+		response, err := c.receive(ctx)
+		if err != nil {
+			return err
+		}
+		if stringField(response, "@type") == "error" {
+			tdErr := &TDLibError{Code: intField(response, "code"), Message: stringField(response, "message")}
+			if isUnexpectedSetTDLibParametersError(tdErr) {
+				continue
+			}
+			return tdErr
+		}
+	}
+	return nil
+}
+
+func isParametersNotSpecifiedError(err error) bool {
+	var tdErr *TDLibError
+	if !errors.As(err, &tdErr) {
+		return false
+	}
+	return strings.Contains(tdErr.Message, "Parameters aren't specified")
+}
+
+func (c *NativeClient) send(ctx context.Context, request map[string]any) error {
+	if err := c.ensureHandle(); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	cString := C.CString(string(payload))
+	defer C.free(unsafe.Pointer(cString))
+	C.td_json_client_send(c.handle, cString)
+	return nil
 }
 
 func (c *NativeClient) getAuthorizationState(ctx context.Context) (AuthorizationState, error) {
@@ -273,22 +403,21 @@ func (c *NativeClient) getAuthorizationState(ctx context.Context) (Authorization
 
 func (c *NativeClient) tdlibParameters() map[string]any {
 	return map[string]any{
-		"@type":                    "setTdlibParameters",
-		"use_test_dc":              false,
-		"database_directory":       c.sessionPath,
-		"files_directory":          filepath.Join(c.sessionPath, "files"),
-		"use_file_database":        true,
-		"use_chat_info_database":   true,
-		"use_message_database":     true,
-		"use_secret_chats":         false,
-		"api_id":                   c.cfg.APIID,
-		"api_hash":                 c.cfg.APIHash,
-		"system_language_code":     "en",
-		"device_model":             "content-scout",
-		"system_version":           "linux",
-		"application_version":      "0.1.0",
-		"enable_storage_optimizer": true,
-		"ignore_file_names":        false,
+		"@type":                   "setTdlibParameters",
+		"use_test_dc":             false,
+		"database_directory":      c.sessionPath,
+		"files_directory":         filepath.Join(c.sessionPath, "files"),
+		"database_encryption_key": "",
+		"use_file_database":       true,
+		"use_chat_info_database":  true,
+		"use_message_database":    true,
+		"use_secret_chats":        false,
+		"api_id":                  c.cfg.APIID,
+		"api_hash":                c.cfg.APIHash,
+		"system_language_code":    "en",
+		"device_model":            "content-scout",
+		"system_version":          runtime.GOOS,
+		"application_version":     "0.1.0",
 	}
 }
 
@@ -327,7 +456,7 @@ func (c *NativeClient) sendAndWait(ctx context.Context, request map[string]any) 
 			continue
 		}
 		if stringField(response, "@type") == "error" {
-			return nil, fmt.Errorf("tdlib error %d: %s", intField(response, "code"), stringField(response, "message"))
+			return nil, &TDLibError{Code: intField(response, "code"), Message: stringField(response, "message")}
 		}
 		return response, nil
 	}
@@ -351,26 +480,53 @@ func (c *NativeClient) receive(ctx context.Context) (map[string]any, error) {
 		if err := decoder.Decode(&response); err != nil {
 			return nil, fmt.Errorf("decode tdlib response: %w", err)
 		}
+		c.updateChatFoldersFrom(response)
 		return response, nil
 	}
 }
 
 func (c *NativeClient) execute(request map[string]any) {
+	_, _ = c.executeAndDecode(request)
+}
+
+func (c *NativeClient) executeAndDecode(request map[string]any) (map[string]any, error) {
 	payload, err := json.Marshal(request)
 	if err != nil {
-		return
+		return nil, err
 	}
 	cString := C.CString(string(payload))
 	defer C.free(unsafe.Pointer(cString))
-	C.td_json_client_execute(c.handle, cString)
+	raw := C.td_json_client_execute(c.handle, cString)
+	if raw == nil {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewBufferString(C.GoString(raw)))
+	decoder.UseNumber()
+	var response map[string]any
+	if err := decoder.Decode(&response); err != nil {
+		return nil, fmt.Errorf("decode tdlib execute response: %w", err)
+	}
+	return response, nil
 }
 
 func (c *NativeClient) updateAuthorizationFrom(response map[string]any) {
 	rawType := rawAuthorizationState(response)
+	if !isRawAuthorizationState(rawType) {
+		return
+	}
+	c.rawAuthState = rawType
 	state := mapAuthorizationState(rawType)
 	if state != AuthorizationStateUnknown {
 		c.authState = state
 	}
+}
+
+func (c *NativeClient) updateChatFoldersFrom(response map[string]any) {
+	if nestedTypeValue(response) != "updateChatFolders" {
+		return
+	}
+	c.folders = mapChatFolders(response)
+	c.haveFolders = true
 }
 
 func rawAuthorizationState(response map[string]any) string {
@@ -381,6 +537,10 @@ func rawAuthorizationState(response map[string]any) string {
 	return rawType
 }
 
+func isRawAuthorizationState(rawType string) bool {
+	return strings.HasPrefix(rawType, "authorizationState")
+}
+
 func tdlibChatList(list ChatList) map[string]any {
 	if list == ChatListArchive {
 		return map[string]any{"@type": "chatListArchive"}
@@ -388,8 +548,16 @@ func tdlibChatList(list ChatList) map[string]any {
 	return map[string]any{"@type": "chatListMain"}
 }
 
+func tdlibFolderChatList(folderID int32) map[string]any {
+	return map[string]any{"@type": "chatListFolder", "chat_folder_id": folderID}
+}
+
 func int64FromAny(value any) int64 {
 	return int64Field(map[string]any{"value": value}, "value")
+}
+
+func cloneFolders(folders []domain.TelegramFolder) []domain.TelegramFolder {
+	return append([]domain.TelegramFolder(nil), folders...)
 }
 
 var _ TelegramClient = (*NativeClient)(nil)

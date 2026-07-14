@@ -164,6 +164,8 @@ type fakeClient struct {
 	folders      []domain.TelegramFolder
 	mainChats    []domain.TelegramChat
 	archiveChats []domain.TelegramChat
+	folderChats  map[int32][]domain.TelegramChat
+	readMessages map[int64][]int64
 }
 
 func (c *fakeClient) Start(context.Context) error {
@@ -210,8 +212,20 @@ func (c *fakeClient) ListChats(_ context.Context, list ChatList) ([]domain.Teleg
 	return c.mainChats, nil
 }
 
+func (c *fakeClient) ListFolderChats(_ context.Context, folderID int32) ([]domain.TelegramChat, error) {
+	return c.folderChats[folderID], nil
+}
+
 func (c *fakeClient) GetChatHistory(context.Context, int64, int64, int) ([]domain.TelegramMessage, error) {
 	return nil, nil
+}
+
+func (c *fakeClient) MarkMessagesRead(_ context.Context, chatID int64, messageIDs []int64) error {
+	if c.readMessages == nil {
+		c.readMessages = make(map[int64][]int64)
+	}
+	c.readMessages[chatID] = append(c.readMessages[chatID], messageIDs...)
+	return nil
 }
 
 type memoryUserRepo struct {

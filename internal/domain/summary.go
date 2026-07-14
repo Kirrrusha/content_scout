@@ -38,4 +38,28 @@ type SummaryTopic struct {
 	MessagesCount int
 	SourcesCount  int
 	Position      int
+	Sources       []SummaryTopicSource
+	Messages      []SummaryTopicMessage
+}
+
+type SummaryTopicSource struct {
+	ID             int64
+	TopicID        int64
+	ChatID         int64
+	TelegramChatID int64
+	Title          string
+	Username       *string
+}
+
+type SummaryTopicMessage struct {
+	ID                 int64
+	TopicID            int64
+	CollectedMessageID int64
+	ChatID             int64
+	TelegramChatID     int64
+	MessageID          int64
+	SourceTitle        string
+	SourceURL          string
+	ClusterIndex       int
+	IsCanonical        bool
 }

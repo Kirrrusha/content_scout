@@ -42,6 +42,16 @@ func main() {
 	}
 	defer logRuntime.Close()
 	logger = logRuntime.Logger
+	stderrPrefixer, err := logging.StartStderrTimestampPrefixer(nil)
+	if err != nil {
+		logger.Error("configure stderr timestamp prefixer failed", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := stderrPrefixer.Close(); err != nil {
+			logger.Error("close stderr timestamp prefixer failed", "error", err)
+		}
+	}()
 	if cfg.TelegramOwnerID == 0 {
 		logger.Warn("telegram owner id is not configured; scheduler worker is idle")
 		return
@@ -89,8 +99,10 @@ func main() {
 		collectionRepo,
 		summaryRepo,
 		postgres.NewTelegramChatRepository(db),
-		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: 60 * time.Second}),
+		postgres.NewReadPositionRepository(db),
+		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: cfg.LLMTimeout}),
 	)
+	summarizer.SetTelegramReadMarker(tdlib.NewReadService(cfg.TelegramOwnerID, userRepo, sessionRepo, factory))
 	exporter := obsidian.NewService(
 		cfg.TelegramOwnerID,
 		cfg.ExportDir,
@@ -127,7 +139,10 @@ func main() {
 			workerID += "-" + hostname
 		}
 	}
-	jobWorker := jobs.NewWorker(jobRepo, jobs.ScheduledPipelineHandler{Scheduler: service}, logger, workerID)
+	jobWorker := jobs.NewWorker(jobRepo, jobs.MultiHandler{
+		jobs.ScheduledPipelineHandler{Scheduler: service},
+		jobs.SummaryGenerationHandler{Summarizer: summarizer},
+	}, logger, workerID)
 
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -138,6 +153,15 @@ func main() {
 			logger.Warn("enqueue due schedules failed", "error", err)
 		} else if count > 0 {
 			logger.Info("due schedules enqueued", "count", count)
+		}
+		if cfg.SummaryRetention > 0 {
+			cutoff := time.Now().Add(-cfg.SummaryRetention)
+			deleted, err := summaryRepo.DeleteSummariesOlderThan(ctx, cutoff)
+			if err != nil {
+				logger.Warn("delete old summaries failed", "error", err)
+			} else if deleted > 0 {
+				logger.Info("old summaries deleted", "count", deleted, "cutoff", cutoff)
+			}
 		}
 		for {
 			claimed, err := jobWorker.RunOnce(ctx)

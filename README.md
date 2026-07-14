@@ -59,11 +59,13 @@ Authorization: Bearer <token>
 | `HTTP_ADDR` | no | `:8080` | API listen address. |
 | `DATABASE_URL` | yes | local PostgreSQL URL in code, Docker URL in `.env.example` | PostgreSQL connection string. |
 | `SERVICE_TOKEN` | yes for `cmd/api` | empty | Bearer token for all internal API endpoints except `/health` and `/ready`. |
+| `INTERNAL_API_URL` | yes for `cmd/bot` | `http://127.0.0.1:8080` | Internal API base URL used by the bot. Use `http://api:8080` in Docker Compose. |
 | `LOG_FORMAT` | no | `json` | Log format: `json` for Docker/production-like runs or `text` for local development. |
 | `LOG_LEVEL` | no | `info` | Minimum log level: `debug`, `info`, `warn`, or `error`. |
 | `LOG_DIR` | no | `./data/logs` locally, `/data/logs` in Docker | Directory for local rotated log files. Empty disables file logging. |
 | `LOG_RETENTION` | no | `24h` | Deletes log files older than this duration. |
 | `LOG_ROTATION_INTERVAL` | no | `1h` | File rotation and cleanup tick interval. |
+| `SUMMARY_RETENTION` | no | `0` | Deletes stored summaries older than this many hours from `cmd/summary-worker`; `0` disables cleanup. |
 | `WORKER_ID` | no | hostname-based | Stable id written to job locks and logs by worker processes. |
 | `TELEGRAM_BOT_TOKEN` | yes for `cmd/bot` | empty | Telegram Bot API token. If empty, the bot exits idle. |
 | `TELEGRAM_OWNER_ID` | yes for bot/API actions | `0` | Telegram user id allowed to control the bot and API flows. |
@@ -76,6 +78,7 @@ Authorization: Bearer <token>
 | `LLM_BASE_URL` | depends on provider | empty | OpenAI-compatible chat completions base URL. |
 | `LLM_API_KEY` | yes for summary/article generation | empty | LLM API key. Do not log it. |
 | `LLM_MODEL` | yes for summary/article generation | empty | Model name for summary and article generation. |
+| `LLM_TIMEOUT` | no | `3m` | HTTP timeout for one LLM request. Increase it for large groups or long periods. |
 | `ENCRYPTION_KEY` | reserved | empty | Reserved for future encrypted secret storage. |
 | `EXPORT_DIR` | no | `./data/exports` locally, `/data/exports` in Docker | Directory for Markdown exports. |
 | `OBSIDIAN_REST_URL` | no | empty | Obsidian Local REST API base URL. |
@@ -87,7 +90,7 @@ Authorization: Bearer <token>
 | Command | Description |
 |---|---|
 | `make build` | Build all Go command binaries with the default non-TDLib local configuration. |
-| `make build-tdlib` | Build `api`, `bot`, and `tdlib-worker` with `-tags tdlib` and CGO enabled. Requires local `libtdjson`. |
+| `make build-tdlib` | Build `api` and `tdlib-worker` with native TDLib enabled, and build `bot` without TDLib. Requires local `libtdjson` for the TDLib binaries. |
 | `make test` | Run the full default Go test suite. |
 | `make test-tdlib-nocgo` | Run TDLib package tests with the `tdlib` tag but CGO disabled, verifying the fallback path. |
 | `make test-tdlib-integration` | Run optional native TDLib integration tests. Requires `libtdjson`, Telegram API credentials, and a session directory. |
@@ -110,7 +113,7 @@ Bot commands currently available:
 | `/start` | Open the main bot menu. |
 | `/connect` | Start or resume TDLib account authorization. |
 | `/phone <number>` | Submit the phone number requested by TDLib. |
-| `/code <code>` | Submit the Telegram login confirmation code. |
+| `/code <code>` | Refused for safety. Do not send Telegram login codes to the bot; submit codes through `POST /telegram/auth/code` or a trusted local admin UI. |
 | `/password <2fa password>` | Submit the 2FA password when the account requires it. |
 | `/session` | Show current TDLib session and authorization state. |
 | `/delete_session` | Log out and delete the stored TDLib session. |
@@ -337,7 +340,7 @@ obsidian_export
 scheduled_pipeline
 ```
 
-`cmd/summary-worker` currently enqueues due schedules as `scheduled_pipeline` jobs and then processes queued jobs. Scheduled jobs use a per-schedule/per-local-day deduplication key, so repeated polling does not create duplicates. Temporary errors are retried with exponential backoff; permanent configuration/input errors go to `dead`.
+`cmd/summary-worker` currently enqueues due schedules as `scheduled_pipeline` jobs and then processes queued jobs. Scheduled jobs use a per-schedule/per-local-day deduplication key, so repeated polling does not create duplicates. Temporary errors are retried with exponential backoff; permanent configuration/input errors go to `dead`. When `SUMMARY_RETENTION` is greater than zero, the worker also deletes summaries older than that many hours on each polling tick.
 
 Multiple workers can run safely:
 
@@ -420,7 +423,3 @@ go test ./internal/storage/postgres
 - Internal API endpoints require `SERVICE_TOKEN` except `/health` and `/ready`.
 - Logs avoid message content and secrets.
 - Docker services run as a non-root user where application containers are used.
-
-## Next PR
-
-The planned PR sequence from the updated roadmap is complete through `PR-019`.

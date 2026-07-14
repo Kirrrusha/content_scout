@@ -59,6 +59,16 @@ func TestSummaryTopicsHandler(t *testing.T) {
 			Importance:   8,
 			Confidence:   domain.ConfidenceHigh,
 			Position:     1,
+			Messages: []domain.SummaryTopicMessage{{
+				CollectedMessageID: 1001,
+				ChatID:             5,
+				TelegramChatID:     -100123,
+				MessageID:          77,
+				SourceTitle:        "Go Channel",
+				SourceURL:          "https://t.me/go/77",
+				ClusterIndex:       0,
+				IsCanonical:        true,
+			}},
 		}},
 	}
 	server := NewWithBrowser(":0", nil, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), nil, nil, nil, nil, nil, browser)
@@ -80,6 +90,9 @@ func TestSummaryTopicsHandler(t *testing.T) {
 	}
 	if len(response) != 1 || response[0].Title != "Go" || response[0].Confidence != "high" {
 		t.Fatalf("response = %+v", response)
+	}
+	if len(response[0].Messages) != 1 || response[0].Messages[0].SourceURL != "https://t.me/go/77" {
+		t.Fatalf("topic messages = %+v", response[0].Messages)
 	}
 }
 

@@ -47,6 +47,14 @@ func (unavailableClient) ListChats(context.Context, ChatList) ([]domain.Telegram
 	return nil, errors.New("native TDLib adapter is not connected yet")
 }
 
+func (unavailableClient) ListFolderChats(context.Context, int32) ([]domain.TelegramChat, error) {
+	return nil, errors.New("native TDLib adapter is not connected yet")
+}
+
 func (unavailableClient) GetChatHistory(context.Context, int64, int64, int) ([]domain.TelegramMessage, error) {
 	return nil, errors.New("native TDLib adapter is not connected yet")
+}
+
+func (unavailableClient) MarkMessagesRead(context.Context, int64, []int64) error {
+	return errors.New("native TDLib adapter is not connected yet")
 }

@@ -77,9 +77,12 @@ services:
       LOG_DIR: ${LOG_DIR:-/data/logs}
       LOG_RETENTION: ${LOG_RETENTION:-24h}
       LOG_ROTATION_INTERVAL: ${LOG_ROTATION_INTERVAL:-1h}
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:8080}
     profiles: ["bot"]
+    depends_on:
+      api:
+        condition: service_healthy
     volumes:
-      - tdlib_data:/data/tdlib
       - exports:/data/exports
       - ./data/logs:/data/logs
 
@@ -112,6 +115,7 @@ services:
       LOG_DIR: ${LOG_DIR:-/data/logs}
       LOG_RETENTION: ${LOG_RETENTION:-24h}
       LOG_ROTATION_INTERVAL: ${LOG_ROTATION_INTERVAL:-1h}
+      SUMMARY_RETENTION: ${SUMMARY_RETENTION:-0}
     profiles: ["worker"]
     volumes:
       - exports:/data/exports

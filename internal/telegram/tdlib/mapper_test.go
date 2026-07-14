@@ -1,6 +1,7 @@
 package tdlib
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -53,6 +54,53 @@ func TestMapChannelChat(t *testing.T) {
 
 	if chat.Type != domain.ChatTypeChannel {
 		t.Fatalf("chat type = %s, want channel", chat.Type)
+	}
+}
+
+func TestMapChatFolders(t *testing.T) {
+	folders := mapChatFolders(map[string]any{
+		"@type": "updateChatFolders",
+		"chat_folders": []any{
+			map[string]any{
+				"id": float64(1),
+				"name": map[string]any{
+					"@type": "chatFolderName",
+					"text": map[string]any{
+						"@type": "formattedText",
+						"text":  "Work",
+					},
+				},
+			},
+		},
+	})
+
+	if len(folders) != 1 {
+		t.Fatalf("folders len = %d, want 1", len(folders))
+	}
+	if folders[0].TelegramID != 1 || folders[0].Name != "Work" {
+		t.Fatalf("folder = %+v", folders[0])
+	}
+}
+
+func TestIsChatsFullyLoadedError(t *testing.T) {
+	if !isChatsFullyLoadedError(&TDLibError{Code: 404, Message: "Not Found"}) {
+		t.Fatal("404 TDLib error should mean chat list is fully loaded")
+	}
+	if isChatsFullyLoadedError(&TDLibError{Code: 400, Message: "Bad Request"}) {
+		t.Fatal("non-404 TDLib error should not mean chat list is fully loaded")
+	}
+	if isChatsFullyLoadedError(errors.New("network failed")) {
+		t.Fatal("generic error should not mean chat list is fully loaded")
+	}
+}
+
+func TestIsUnexpectedSetTDLibParametersError(t *testing.T) {
+	err := &TDLibError{Code: 400, Message: "Unexpected setTdlibParameters"}
+	if !isUnexpectedSetTDLibParametersError(err) {
+		t.Fatal("Unexpected setTdlibParameters should be recognized")
+	}
+	if isUnexpectedSetTDLibParametersError(&TDLibError{Code: 400, Message: "PHONE_NUMBER_INVALID"}) {
+		t.Fatal("unrelated TDLib error should not be recognized")
 	}
 }
 

@@ -29,5 +29,15 @@ func main() {
 	}
 	defer logRuntime.Close()
 	logger = logRuntime.Logger
+	stderrPrefixer, err := logging.StartStderrTimestampPrefixer(nil)
+	if err != nil {
+		logger.Error("configure stderr timestamp prefixer failed", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := stderrPrefixer.Close(); err != nil {
+			logger.Error("close stderr timestamp prefixer failed", "error", err)
+		}
+	}()
 	logger.Info("tdlib worker is ready", "adapter_mode", tdlib.AdapterMode())
 }

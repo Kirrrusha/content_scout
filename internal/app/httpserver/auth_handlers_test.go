@@ -63,6 +63,23 @@ func TestAuthHandlerRejectsForbiddenOwner(t *testing.T) {
 	}
 }
 
+func TestAuthHandlerReportsCompromisedLoginCode(t *testing.T) {
+	auth := &fakeHTTPAuth{err: &tdlib.TDLibError{Code: 400, Message: "LOGIN_CODE_INVALID: you reported this code"}}
+	server := NewWithAuth(":0", nil, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), auth)
+
+	req := httptest.NewRequest(http.MethodPost, "/telegram/auth/code", bytes.NewBufferString(`{"telegram_user_id":42,"code":"12345"}`))
+	rec := httptest.NewRecorder()
+
+	server.httpServer.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("outside Telegram chat")) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 type fakeHTTPAuth struct {
 	err         error
 	phone       string

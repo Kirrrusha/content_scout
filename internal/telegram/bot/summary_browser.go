@@ -89,7 +89,7 @@ func (r *Router) handleSummaryCallback(ctx context.Context, in Incoming) (Outgoi
 		if err != nil || summaryID <= 0 {
 			return Outgoing{ChatID: in.ChatID, Text: "Неизвестное summary.", AnswerCallback: "Неизвестное summary."}, nil
 		}
-		return r.renderSummary(ctx, in.ChatID, in.UserID, summaryID, in.CallbackMessage, "Summary открыто.")
+		return r.renderSummary(ctx, in.ChatID, in.UserID, summaryID, in.CallbackMessage, "Сводка открыта.")
 	case "topic":
 		if len(fields) != 4 {
 			return Outgoing{ChatID: in.ChatID, Text: "Неизвестное действие.", AnswerCallback: "Неизвестное действие."}, nil
@@ -110,11 +110,11 @@ func (r *Router) handleSummaryCallback(ctx context.Context, in Incoming) (Outgoi
 
 func (r *Router) renderSummary(ctx context.Context, chatID, userID, summaryID int64, editMessageID int, callbackAnswer string) (Outgoing, error) {
 	if r.browser == nil {
-		return Outgoing{ChatID: chatID, Text: "История summary пока не настроена.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+		return Outgoing{ChatID: chatID, Text: "Просмотр сводок пока не настроен.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 	}
 	item, err := r.browser.GetSummary(ctx, userID, summaryID)
 	if errors.Is(err, summary.ErrSummaryNotFound) {
-		return Outgoing{ChatID: chatID, Text: "Summary не найдено.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+		return Outgoing{ChatID: chatID, Text: "Сводка не найдена.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 	}
 	if err != nil {
 		return Outgoing{ChatID: chatID, Text: publicAuthError(err), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
@@ -161,11 +161,74 @@ func summariesListText(items []domain.Summary) string {
 }
 
 func summaryText(item domain.Summary) string {
-	return fmt.Sprintf("#%d %s\n\n%s\n\nТем: %d | сообщений: %d | источников: %d", item.ID, fallbackTitle(item.Title), fallbackTitle(item.Overview), item.TopicsCount, item.MessagesCount, item.SourcesCount)
+	return fmt.Sprintf("Сводка #%d\n\n%s\n\n%s\n\nТем: %d\nСообщений: %d\nИсточников: %d", item.ID, fallbackTitle(item.Title), fallbackTitle(item.Overview), item.TopicsCount, item.MessagesCount, item.SourcesCount)
 }
 
 func topicCardText(card summary.TopicCard) string {
-	return fmt.Sprintf("%s\n\n%s\n\n%s\n\nТема %d/%d | важность: %d | confidence: %s | сообщений: %d", fallbackTitle(card.Topic.Title), fallbackTitle(card.Topic.ShortSummary), fallbackTitle(card.Topic.FullSummary), card.Index, card.Total, card.Topic.Importance, card.Topic.Confidence, card.Topic.MessagesCount)
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n\n%s\n\n%s", fallbackTitle(card.Topic.Title), fallbackTitle(card.Topic.ShortSummary), fallbackTitle(card.Topic.FullSummary))
+	if sources := topicSourcesText(card.Topic.Sources); sources != "" {
+		fmt.Fprintf(&b, "\n\nКаналы:\n%s", sources)
+	}
+	if messages := topicMessagesText(card.Topic.Messages); messages != "" {
+		fmt.Fprintf(&b, "\n\nСообщения:\n%s", messages)
+	}
+	fmt.Fprintf(&b, "\n\nТема %d/%d | важность: %d | confidence: %s | сообщений: %d", card.Index, card.Total, card.Topic.Importance, card.Topic.Confidence, card.Topic.MessagesCount)
+	return b.String()
+}
+
+func topicSourcesText(sources []domain.SummaryTopicSource) string {
+	if len(sources) == 0 {
+		return ""
+	}
+	const limit = 5
+	lines := make([]string, 0, min(len(sources), limit))
+	for i, source := range sources {
+		if i >= limit {
+			break
+		}
+		title := fallbackTitle(source.Title)
+		username := strings.TrimPrefix(strings.TrimSpace(stringValue(source.Username)), "@")
+		if username == "" {
+			lines = append(lines, "- "+title)
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s: https://t.me/%s", title, username))
+	}
+	if len(sources) > limit {
+		lines = append(lines, fmt.Sprintf("- ещё %d", len(sources)-limit))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func topicMessagesText(messages []domain.SummaryTopicMessage) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	const limit = 6
+	lines := make([]string, 0, min(len(messages), limit))
+	for i, message := range messages {
+		if i >= limit {
+			break
+		}
+		title := fallbackTitle(message.SourceTitle)
+		if strings.TrimSpace(message.SourceURL) == "" {
+			lines = append(lines, fmt.Sprintf("- %s", title))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", title, message.SourceURL))
+	}
+	if len(messages) > limit {
+		lines = append(lines, fmt.Sprintf("- ещё %d", len(messages)-limit))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func summariesMenu(items []domain.Summary) Menu {
