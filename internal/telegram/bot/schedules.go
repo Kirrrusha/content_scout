@@ -266,14 +266,14 @@ func scheduleLine(item domain.SummarySchedule) string {
 func scheduleDetails(item domain.SummarySchedule, runs []domain.ScheduleRun) string {
 	var b strings.Builder
 	b.WriteString(scheduleLine(item))
-	b.WriteString(fmt.Sprintf("\nsummary_type=%s quiet=%s-%s", item.SummaryType, item.QuietHoursStart, item.QuietHoursEnd))
+	fmt.Fprintf(&b, "\nsummary_type=%s quiet=%s-%s", item.SummaryType, item.QuietHoursStart, item.QuietHoursEnd)
 	if len(runs) == 0 {
 		b.WriteString("\n\nЗапусков пока нет.")
 		return b.String()
 	}
 	b.WriteString("\n\nПоследние запуски:")
 	for _, run := range runs {
-		b.WriteString(fmt.Sprintf("\n#%d %s", run.ID, run.Status))
+		fmt.Fprintf(&b, "\n#%d %s", run.ID, run.Status)
 		if run.Error != nil {
 			b.WriteString(": " + *run.Error)
 		}

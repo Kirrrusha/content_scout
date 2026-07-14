@@ -110,7 +110,7 @@ func (r *MessageCollectionRepository) ListMessages(ctx context.Context, jobID in
 	if err != nil {
 		return nil, fmt.Errorf("list collected messages: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var messages []domain.CollectedMessage
 	for rows.Next() {

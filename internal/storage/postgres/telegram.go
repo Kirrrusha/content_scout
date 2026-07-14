@@ -104,7 +104,7 @@ func (r *TelegramFolderRepository) ListByUserID(ctx context.Context, userID int6
 	if err != nil {
 		return nil, fmt.Errorf("list telegram folders: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var folders []domain.TelegramFolder
 	for rows.Next() {
@@ -163,7 +163,7 @@ func (r *TelegramChatRepository) ListByUserID(ctx context.Context, userID int64)
 	if err != nil {
 		return nil, fmt.Errorf("list telegram chats: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var chats []domain.TelegramChat
 	for rows.Next() {

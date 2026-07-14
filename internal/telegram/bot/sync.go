@@ -41,10 +41,6 @@ func foldersText(folders []domain.TelegramFolder) string {
 	return builder.String()
 }
 
-func chatsText(chats []domain.TelegramChat) string {
-	return chatsPageText(chats, 0)
-}
-
 func chatsPageText(chats []domain.TelegramChat, page int) string {
 	if len(chats) == 0 {
 		return "Чаты пока не синхронизированы."

@@ -42,7 +42,7 @@ func main() {
 		logger.Error("configure logging failed", "error", err)
 		os.Exit(1)
 	}
-	defer logRuntime.Close()
+	defer func() { _ = logRuntime.Close() }()
 	logger = logRuntime.Logger
 	stderrPrefixer, err := logging.StartStderrTimestampPrefixer(nil)
 	if err != nil {
@@ -63,7 +63,7 @@ func main() {
 		logger.Error("connect database failed", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	factory := tdlib.NewClientFactory(tdlib.ClientConfig{
 		APIID:   cfg.TelegramAPIID,

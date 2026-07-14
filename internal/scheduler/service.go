@@ -196,9 +196,7 @@ func parseDailyTime(value string) (int, int, bool) {
 	if value == "@daily" {
 		return 9, 0, true
 	}
-	if strings.HasPrefix(value, "daily@") {
-		value = strings.TrimPrefix(value, "daily@")
-	}
+	value = strings.TrimPrefix(value, "daily@")
 	parts := strings.Split(value, ":")
 	if len(parts) != 2 {
 		return 0, 0, false

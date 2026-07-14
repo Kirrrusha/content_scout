@@ -49,7 +49,7 @@ func (c *RESTClient) Health(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("obsidian rest health status: %d", resp.StatusCode)
@@ -66,7 +66,7 @@ func (c *RESTClient) ReadNote(ctx context.Context, vaultPath string) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil, ErrNoteNotFound
@@ -88,7 +88,7 @@ func (c *RESTClient) WriteNote(ctx context.Context, vaultPath string, content []
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("obsidian write status: %d", resp.StatusCode)

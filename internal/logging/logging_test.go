@@ -32,7 +32,7 @@ func TestRotatingWriterWritesHourlyFileAndCurrentLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newRotatingWriter() error = %v", err)
 	}
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 
 	if _, err := writer.Write([]byte("hello\n")); err != nil {
 		t.Fatalf("Write() error = %v", err)

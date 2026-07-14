@@ -160,7 +160,7 @@ func (r *SummaryRepository) ListSummariesByUser(ctx context.Context, userID int6
 	if err != nil {
 		return nil, fmt.Errorf("list summaries by user: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var summaries []domain.Summary
 	for rows.Next() {
@@ -186,7 +186,7 @@ func (r *SummaryRepository) ListTopics(ctx context.Context, summaryID int64) ([]
 	if err != nil {
 		return nil, fmt.Errorf("list summary topics: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var topics []domain.SummaryTopic
 	for rows.Next() {
@@ -241,7 +241,7 @@ func (r *SummaryRepository) attachTopicSources(ctx context.Context, summaryID in
 	if err != nil {
 		return fmt.Errorf("list summary topic sources: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var topicID int64
@@ -293,7 +293,7 @@ func (r *SummaryRepository) attachTopicMessages(ctx context.Context, summaryID i
 	if err != nil {
 		return fmt.Errorf("list summary topic messages: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var topicID int64

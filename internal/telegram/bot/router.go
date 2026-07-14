@@ -277,28 +277,6 @@ func (r *Router) showHome(ctx context.Context, chatID, userID int64, editMessage
 	}, nil
 }
 
-func (r *Router) showPlaceholder(ctx context.Context, chatID, userID int64, view DialogView, text string, args ...any) (Outgoing, error) {
-	editMessageID := 0
-	callbackAnswer := ""
-	if len(args) > 0 {
-		editMessageID, _ = args[0].(int)
-	}
-	if len(args) > 1 {
-		callbackAnswer, _ = args[1].(string)
-	}
-
-	if err := r.states.Set(ctx, userID, DialogState{View: view}); err != nil {
-		return Outgoing{}, fmt.Errorf("set dialog state: %w", err)
-	}
-	return Outgoing{
-		ChatID:         chatID,
-		Text:           text,
-		Menu:           BackMenu(),
-		EditMessageID:  editMessageID,
-		AnswerCallback: callbackAnswer,
-	}, nil
-}
-
 func MainMenu() Menu {
 	return Menu{
 		{{Text: "Новая сводка", Data: ActionNewSummary}},

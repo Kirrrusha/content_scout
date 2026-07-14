@@ -109,7 +109,7 @@ func (r *ArticleRepository) ListByUser(ctx context.Context, userID int64, limit 
 	if err != nil {
 		return nil, fmt.Errorf("list articles by user: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var articles []domain.Article
 	for rows.Next() {
@@ -135,7 +135,7 @@ func (r *ArticleRepository) ListSources(ctx context.Context, articleID int64) ([
 	if err != nil {
 		return nil, fmt.Errorf("list article sources: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var sources []domain.ArticleSource
 	for rows.Next() {

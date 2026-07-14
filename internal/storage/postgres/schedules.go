@@ -74,7 +74,7 @@ func (r *SummaryScheduleRepository) list(ctx context.Context, clause string, arg
 	if err != nil {
 		return nil, fmt.Errorf("list summary schedules: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var schedules []domain.SummarySchedule
 	for rows.Next() {
 		schedule, err := scanSchedule(rows)
@@ -103,7 +103,7 @@ func (r *SummaryScheduleRepository) ListRuns(ctx context.Context, scheduleID int
 	if err != nil {
 		return nil, fmt.Errorf("list schedule runs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var runs []domain.ScheduleRun
 	for rows.Next() {
 		run, err := scanScheduleRun(rows)

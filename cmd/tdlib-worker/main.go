@@ -27,7 +27,7 @@ func main() {
 		logger.Error("configure logging failed", "error", err)
 		os.Exit(1)
 	}
-	defer logRuntime.Close()
+	defer func() { _ = logRuntime.Close() }()
 	logger = logRuntime.Logger
 	stderrPrefixer, err := logging.StartStderrTimestampPrefixer(nil)
 	if err != nil {

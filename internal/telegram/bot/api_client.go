@@ -210,7 +210,7 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, body any, t
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		var errorResponse apiErrorResponse

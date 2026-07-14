@@ -122,7 +122,7 @@ func (c *OpenAICompatible) doChat(ctx context.Context, payload chatRequest) ([]b
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil, fmt.Errorf("llm temporary status: %d", resp.StatusCode)

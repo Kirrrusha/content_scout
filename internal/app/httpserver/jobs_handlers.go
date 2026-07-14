@@ -28,11 +28,11 @@ type jobResponse struct {
 
 type jobArtifactsView struct {
 	CollectionJobID int64 `json:"collection_job_id,omitempty"`
-	SummaryID      int64 `json:"summary_id,omitempty"`
-	SummaryJobID   int64 `json:"summary_job_id,omitempty"`
-	TopicsCount    int   `json:"topics_count,omitempty"`
-	MessagesCount  int   `json:"messages_count,omitempty"`
-	DuplicateCount int   `json:"duplicate_count,omitempty"`
+	SummaryID       int64 `json:"summary_id,omitempty"`
+	SummaryJobID    int64 `json:"summary_job_id,omitempty"`
+	TopicsCount     int   `json:"topics_count,omitempty"`
+	MessagesCount   int   `json:"messages_count,omitempty"`
+	DuplicateCount  int   `json:"duplicate_count,omitempty"`
 }
 
 func (s *Server) jobGet(w http.ResponseWriter, r *http.Request) {

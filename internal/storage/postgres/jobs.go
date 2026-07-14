@@ -66,7 +66,7 @@ func (r *JobRepository) ClaimNext(ctx context.Context, workerID string, lease ti
 	if err != nil {
 		return nil, fmt.Errorf("begin claim job: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var id int64
 	err = tx.QueryRowContext(ctx, `

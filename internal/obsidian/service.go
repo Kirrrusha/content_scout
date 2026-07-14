@@ -83,7 +83,7 @@ func (s *Service) ExportArticle(ctx context.Context, telegramUserID, articleID i
 	content := RenderArticle(*item, sources)
 	fileName := safeFileName(item.Title, ".md")
 	vaultPath := filepath.ToSlash(filepath.Join("Articles", categoryDir(item.Tags), fileName))
-	return s.persist(ctx, content, fileName, vaultPath, &item.ID, nil)
+	return s.persist(ctx, content, vaultPath, &item.ID, nil)
 }
 
 func (s *Service) ExportSummary(ctx context.Context, telegramUserID, summaryID int64) (*Result, error) {
@@ -101,10 +101,10 @@ func (s *Service) ExportSummary(ctx context.Context, telegramUserID, summaryID i
 	content := RenderSummary(*item)
 	fileName := safeFileName(item.Title, ".md")
 	vaultPath := filepath.ToSlash(filepath.Join("Summaries", "Telegram", fileName))
-	return s.persist(ctx, content, fileName, vaultPath, nil, &item.ID)
+	return s.persist(ctx, content, vaultPath, nil, &item.ID)
 }
 
-func (s *Service) persist(ctx context.Context, content []byte, fileName, vaultPath string, articleID, summaryID *int64) (*Result, error) {
+func (s *Service) persist(ctx context.Context, content []byte, vaultPath string, articleID, summaryID *int64) (*Result, error) {
 	hash := contentHash(content)
 	if existing, err := s.exports.FindByContentHash(ctx, hash); err != nil {
 		return nil, err

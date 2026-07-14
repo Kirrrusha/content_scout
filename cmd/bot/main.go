@@ -40,7 +40,7 @@ func main() {
 		logger.Error("configure logging failed", "error", err)
 		os.Exit(1)
 	}
-	defer logRuntime.Close()
+	defer func() { _ = logRuntime.Close() }()
 	logger = logRuntime.Logger
 	if cfg.TelegramBotToken == "" {
 		logger.Warn("telegram bot token is not configured; bot shell is idle")
@@ -59,7 +59,7 @@ func main() {
 		logger.Error("connect database failed", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	userRepo := postgres.NewUserRepository(db)
 	internalAPITimeout := cfg.LLMTimeout + time.Minute

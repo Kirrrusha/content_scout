@@ -18,7 +18,7 @@ RUN cmake -S /td -B /td/build \
         -DTD_ENABLE_JNI=OFF \
     && cmake --build /td/build --target install -j"${TDLIB_BUILD_JOBS}"
 
-FROM golang:1.25-bookworm AS build
+FROM golang:1.26-bookworm AS build
 WORKDIR /src
 COPY --from=tdlib /usr/local /usr/local
 RUN ldconfig

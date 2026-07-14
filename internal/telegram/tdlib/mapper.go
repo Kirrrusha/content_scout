@@ -178,6 +178,9 @@ func unixTimePtr(timestamp int64) *time.Time {
 	return &value
 }
 
+// Used from client.go, which is behind the tdlib build tag the linter runs without.
+//
+//nolint:unused
 func nestedType(raw map[string]any, key string) string {
 	return nestedTypeValue(nestedMap(raw, key))
 }

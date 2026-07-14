@@ -15,7 +15,7 @@ func TestStderrTimestampPrefixerAddsTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dup stderr: %v", err)
 	}
-	defer syscall.Close(realStderr)
+	defer func() { _ = syscall.Close(realStderr) }()
 	defer func() {
 		if err := syscall.Dup2(realStderr, int(os.Stderr.Fd())); err != nil {
 			t.Fatalf("restore real stderr: %v", err)
@@ -26,7 +26,7 @@ func TestStderrTimestampPrefixerAddsTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create temp stderr: %v", err)
 	}
-	defer tmp.Close()
+	defer func() { _ = tmp.Close() }()
 	if err := syscall.Dup2(int(tmp.Fd()), int(os.Stderr.Fd())); err != nil {
 		t.Fatalf("redirect stderr to temp file: %v", err)
 	}

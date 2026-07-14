@@ -35,7 +35,7 @@ func main() {
 		logger.Error("configure logging failed", "error", err)
 		os.Exit(1)
 	}
-	defer logRuntime.Close()
+	defer func() { _ = logRuntime.Close() }()
 	logger = logRuntime.Logger
 
 	ctx := context.Background()
@@ -44,7 +44,7 @@ func main() {
 		logger.Error("connect database failed", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if direction != string(postgres.MigrationUp) && direction != string(postgres.MigrationDown) {
 		logger.Error("invalid migration direction", "direction", direction)
