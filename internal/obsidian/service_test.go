@@ -92,7 +92,7 @@ func TestExportArticleWritesFileAndReusesHash(t *testing.T) {
 	}
 }
 
-func TestExportArticleFallsBackWhenExportDirIsReadOnly(t *testing.T) {
+func TestExportArticleFallsBackWhenExportDirIsUnusable(t *testing.T) {
 	ctx := context.Background()
 	cwd := t.TempDir()
 	previousCWD, err := os.Getwd()
@@ -106,12 +106,9 @@ func TestExportArticleFallsBackWhenExportDirIsReadOnly(t *testing.T) {
 		_ = os.Chdir(previousCWD)
 	})
 	blockedDir := filepath.Join(cwd, "blocked")
-	if err := os.Mkdir(blockedDir, 0o500); err != nil {
-		t.Fatalf("Mkdir() error = %v", err)
+	if err := os.WriteFile(blockedDir, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
-	t.Cleanup(func() {
-		_ = os.Chmod(blockedDir, 0o700)
-	})
 	created := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
 	article := &domain.Article{
 		ID:              7,

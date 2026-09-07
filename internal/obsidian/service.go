@@ -189,7 +189,7 @@ func exportDirCandidates(exportDir string) []string {
 }
 
 func recoverableExportDirError(err error) bool {
-	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EROFS) || errors.Is(err, syscall.EACCES)
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EROFS) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.ENOTDIR)
 }
 
 func (s *Service) writeRESTNote(ctx context.Context, vaultPath string, content []byte) error {
