@@ -8,6 +8,10 @@
 2. **CD** — сборка и push образов в cloud.ru Artifact Registry, деплой на VM в cloud.ru через docker compose.
 3. **Telegram-прокси** — отдельный дешёвый VPS вне РФ с SOCKS5-прокси, через который бот и tdlib-worker ходят в Telegram.
 
+Текущий production target: одна VM `88.218.67.232`, SSH alias `content-scout`,
+пользователь `scout`, Ubuntu 22.04 LTS. Бэкапы PostgreSQL и TDLib-сессии
+на первом этапе намеренно не настраиваются.
+
 ---
 
 ## 1. CI (GitHub Actions)
@@ -74,9 +78,13 @@ jobs:
 На VM:
 
 - Docker + docker compose plugin.
-- `deployments/compose/` — production compose-файл: образы из registry (не build), `restart: unless-stopped`, `.env` с секретами (токены бота, DATABASE_URL, ключи LLM) — лежит только на сервере, не в git.
-- Postgres: либо контейнер с volume + ежедневный `pg_dump` на диск/S3 cloud.ru, либо managed Postgres от cloud.ru (меньше возни с бэкапами, дороже). Для старта хватит контейнера с бэкапами.
+- `deployments/compose/docker-compose.prod.yml` — production compose-файл: образы из registry (не build), `restart: unless-stopped`.
+- Секреты: источник правды Cloud.ru Secret Management; GitHub Actions подтягивает JSON-секрет, временно копирует его на VM, deploy-скрипт рендерит `/opt/content_scout/.env` с `chmod 600` и удаляет исходный JSON.
+- SSH host key: CD сверяет ED25519 fingerprint из `SSH_HOST_ED25519_FINGERPRINT` перед добавлением host key в `known_hosts`.
+- Registry login: пароль registry передается на VM через SSH stdin; Docker credentials пишутся только во временный `DOCKER_CONFIG`, который удаляется после деплоя.
+- Postgres: контейнер с Docker volume, без публикации порта наружу.
 - tdlib-worker: volume под `TDLIB_DATABASE_DIR` (сессия TDLib должна переживать рестарты).
+- API: порт `8080` публикуется только на `127.0.0.1`, в интернет не открывается.
 
 ## 3. Telegram-прокси (VPS вне РФ)
 
@@ -110,7 +118,7 @@ jobs:
 
 1. **PR: CI-расширение** — golangci-lint + конфиг, gofmt, `-race`, govulncheck, docker build matrix.
 2. **PR: поддержка TELEGRAM_PROXY_URL** в боте и tdlib-worker (можно тестировать локально без прокси).
-3. **Руками: инфраструктура** — registry + сервисный аккаунт в cloud.ru; VM cloud.ru; VPS с SOCKS5; секреты в GitHub.
+3. **Руками: инфраструктура** — registry + сервисный аккаунт в cloud.ru; VM cloud.ru; VPS с SOCKS5; секреты в Cloud.ru Secret Management и GitHub.
 4. **PR: production compose** + `cd.yml` (push образов + ssh-деплой + migrate).
 5. **Первый деплой руками**, проверка: бот отвечает, tdlib-сессия живёт, summary-worker обрабатывает очередь.
 6. **Дальше** — деплой автоматом с каждого merge в main.
@@ -119,6 +127,7 @@ jobs:
 
 | Секрет | Место |
 |---|---|
-| Registry key id/secret, SSH-ключ деплоя | GitHub Secrets |
-| Токен бота, DATABASE_URL, LLM-ключи, TELEGRAM_PROXY_URL | `.env` на VM (chmod 600) |
-| TDLib api_id/api_hash, сессия | `.env` на VM + volume |
+| Registry key id/secret, SSH-ключ деплоя, SSH host fingerprint, Cloud.ru Secret Manager access key | GitHub Secrets |
+| Токен бота, DATABASE_URL, LLM-ключи, TELEGRAM_PROXY_URL, TDLib api_id/api_hash | Cloud.ru Secret Management |
+| Runtime `.env` | Генерируется на VM при деплое, `chmod 600`, не является источником правды |
+| TDLib-сессия | Docker volume `tdlib_data` |

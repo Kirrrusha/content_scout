@@ -1,0 +1,105 @@
+name: cd
+
+on:
+  workflow_run:
+    workflows:
+      - ci
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [api, bot, migrate, summary-worker, tdlib-worker]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.IMAGE_TAG }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.CLOUDRU_REGISTRY }}
+          username: ${{ secrets.CLOUDRU_REGISTRY_KEY_ID }}
+          password: ${{ secrets.CLOUDRU_REGISTRY_KEY_SECRET }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployments/docker/${{ matrix.image }}.Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.CLOUDRU_REGISTRY }}/content_scout-${{ matrix.image }}:${{ env.IMAGE_TAG }}
+            ${{ secrets.CLOUDRU_REGISTRY }}/content_scout-${{ matrix.image }}:latest
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.IMAGE_TAG }}
+      - name: Install deploy dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends jq openssh-client
+      - name: Fetch production secret from Cloud.ru Secret Manager
+        env:
+          CLOUDRU_SECRET_KEY_ID: ${{ secrets.CLOUDRU_SECRET_KEY_ID }}
+          CLOUDRU_SECRET_KEY_SECRET: ${{ secrets.CLOUDRU_SECRET_KEY_SECRET }}
+          CLOUDRU_SECRET_PROJECT_ID: ${{ secrets.CLOUDRU_SECRET_PROJECT_ID }}
+          CLOUDRU_SECRET_ID: ${{ secrets.CLOUDRU_SECRET_ID }}
+          CLOUDRU_SECRET_NAME: content-scout-prod-env
+        run: deployments/scripts/fetch-cloudru-secret-json.sh /tmp/content-scout-prod-env.json
+      - name: Prepare SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_HOST_ED25519_FINGERPRINT: ${{ secrets.SSH_HOST_ED25519_FINGERPRINT }}
+        run: |
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/null ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          ssh-keyscan -t ed25519 "$SSH_HOST" > /tmp/ssh_known_hosts
+          actual_fingerprint="$(ssh-keygen -lf /tmp/ssh_known_hosts | awk '{print $2}')"
+          if [ "$actual_fingerprint" != "$SSH_HOST_ED25519_FINGERPRINT" ]; then
+            echo "SSH host key fingerprint mismatch for $SSH_HOST" >&2
+            echo "Expected: $SSH_HOST_ED25519_FINGERPRINT" >&2
+            echo "Actual:   $actual_fingerprint" >&2
+            exit 1
+          fi
+          ssh-keyscan -H -t ed25519 "$SSH_HOST" >> ~/.ssh/known_hosts
+      - name: Upload deployment files
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" 'mkdir -p /opt/content_scout'
+          scp -i ~/.ssh/deploy_key deployments/compose/docker-compose.prod.yml "$SSH_USER@$SSH_HOST:/opt/content_scout/docker-compose.prod.yml"
+          scp -i ~/.ssh/deploy_key deployments/scripts/deploy-prod.sh "$SSH_USER@$SSH_HOST:/opt/content_scout/deploy-prod.sh"
+          scp -i ~/.ssh/deploy_key deployments/scripts/render-env-from-secret-json.sh "$SSH_USER@$SSH_HOST:/opt/content_scout/render-env-from-secret-json.sh"
+          scp -i ~/.ssh/deploy_key /tmp/content-scout-prod-env.json "$SSH_USER@$SSH_HOST:/opt/content_scout/.env.secret.json"
+          ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" 'chmod 600 /opt/content_scout/.env.secret.json'
+      - name: Deploy on VM
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          CLOUDRU_REGISTRY: ${{ secrets.CLOUDRU_REGISTRY }}
+          CLOUDRU_REGISTRY_KEY_ID: ${{ secrets.CLOUDRU_REGISTRY_KEY_ID }}
+          CLOUDRU_REGISTRY_KEY_SECRET: ${{ secrets.CLOUDRU_REGISTRY_KEY_SECRET }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          printf '%s\n' "$CLOUDRU_REGISTRY_KEY_SECRET" \
+            | ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" \
+              "set -e; export DOCKER_CONFIG=\$(mktemp -d); trap 'rm -rf \"\$DOCKER_CONFIG\"' EXIT; docker login '$CLOUDRU_REGISTRY' -u '$CLOUDRU_REGISTRY_KEY_ID' --password-stdin; chmod +x /opt/content_scout/deploy-prod.sh /opt/content_scout/render-env-from-secret-json.sh; CLOUDRU_REGISTRY='$CLOUDRU_REGISTRY' IMAGE_TAG='$IMAGE_TAG' /opt/content_scout/deploy-prod.sh"

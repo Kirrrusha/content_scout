@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "usage: $0 <json-output-file>" >&2
+  exit 2
+fi
+
+output_file="$1"
+
+: "${CLOUDRU_SECRET_KEY_ID:?CLOUDRU_SECRET_KEY_ID is required}"
+: "${CLOUDRU_SECRET_KEY_SECRET:?CLOUDRU_SECRET_KEY_SECRET is required}"
+
+secret_name="${CLOUDRU_SECRET_NAME:-content-scout-prod-env}"
+auth_url="${CLOUDRU_AUTH_URL:-https://id.cloud.ru/auth/system/openid/token}"
+api_url="${CLOUDRU_SECRET_MANAGER_API_URL:-https://secretmanager.api.cloud.ru/v1}"
+
+token_response="$(mktemp)"
+secret_response="$(mktemp)"
+decoded_secret="$(mktemp)"
+trap 'rm -f "$token_response" "$secret_response" "$decoded_secret"' EXIT
+
+curl -fsS \
+  --data-urlencode 'grant_type=access_key' \
+  --data-urlencode "client_id=$CLOUDRU_SECRET_KEY_ID" \
+  --data-urlencode "client_secret=$CLOUDRU_SECRET_KEY_SECRET" \
+  "$auth_url" >"$token_response"
+
+access_token="$(jq -r '.access_token // empty' "$token_response")"
+if [[ -z "$access_token" ]]; then
+  echo "Cloud.ru auth response did not include access_token" >&2
+  exit 1
+fi
+
+if [[ -n "${CLOUDRU_SECRET_ID:-}" ]]; then
+  curl -fsS \
+    -H "Authorization: Bearer $access_token" \
+    "$api_url/secrets/$CLOUDRU_SECRET_ID" >"$secret_response"
+else
+  : "${CLOUDRU_SECRET_PROJECT_ID:?CLOUDRU_SECRET_PROJECT_ID is required when CLOUDRU_SECRET_ID is not set}"
+  curl -fsS \
+    -G \
+    -H "Authorization: Bearer $access_token" \
+    --data-urlencode "parent_id=$CLOUDRU_SECRET_PROJECT_ID" \
+    --data-urlencode "name=$secret_name" \
+    "$api_url/secrets" >"$secret_response"
+fi
+
+secret_payload="$(
+  jq -r '
+    .payload.data.value
+    // .secret.payload.data.value
+    // .secrets[0].payload.data.value
+    // .items[0].payload.data.value
+    // empty
+  ' "$secret_response"
+)"
+
+if [[ -z "$secret_payload" ]]; then
+  echo "Cloud.ru Secret Manager response did not include payload.data.value" >&2
+  exit 1
+fi
+
+printf '%s' "$secret_payload" | base64 --decode >"$decoded_secret"
+jq -e 'type == "object"' "$decoded_secret" >/dev/null
+install -m 600 "$decoded_secret" "$output_file"
