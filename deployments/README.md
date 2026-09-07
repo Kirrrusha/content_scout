@@ -66,6 +66,11 @@ After the GitHub secrets and Cloud.ru secret are present, successful `ci` runs
 on `main` trigger `.github/workflows/cd.yml`. It can also be started manually
 with `workflow_dispatch`.
 
+GitVerse can use the same secret names in `.gitverse/workflows/deploy.yml`.
+Enable CI/CD in repository settings before relying on that workflow. The
+GitVerse workflow uses Kaniko because Cloud-hosted GitVerse runners do not
+provide Docker socket access.
+
 For the current VM `88.218.67.232`, set:
 
 ```text
