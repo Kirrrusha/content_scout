@@ -1,10 +1,12 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
@@ -43,7 +45,9 @@ func (s *Server) authStart(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	status, err := s.auth.Start(r.Context(), req.TelegramUserID)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	status, err := s.auth.Start(ctx, req.TelegramUserID)
 	s.writeAuthStatus(w, status, err)
 }
 
@@ -55,7 +59,9 @@ func (s *Server) authPhone(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	status, err := s.auth.SubmitPhoneNumber(r.Context(), req.TelegramUserID, req.Phone)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	status, err := s.auth.SubmitPhoneNumber(ctx, req.TelegramUserID, req.Phone)
 	s.writeAuthStatus(w, status, err)
 }
 
@@ -67,7 +73,9 @@ func (s *Server) authCode(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	status, err := s.auth.SubmitCode(r.Context(), req.TelegramUserID, req.Code)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	status, err := s.auth.SubmitCode(ctx, req.TelegramUserID, req.Code)
 	s.writeAuthStatus(w, status, err)
 }
 
@@ -79,7 +87,9 @@ func (s *Server) authPassword(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	status, err := s.auth.SubmitPassword(r.Context(), req.TelegramUserID, req.Password)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	status, err := s.auth.SubmitPassword(ctx, req.TelegramUserID, req.Password)
 	s.writeAuthStatus(w, status, err)
 }
 
@@ -92,7 +102,9 @@ func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "telegram_user_id is required"})
 		return
 	}
-	status, err := s.auth.Status(r.Context(), telegramUserID)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	status, err := s.auth.Status(ctx, telegramUserID)
 	s.writeAuthStatus(w, status, err)
 }
 

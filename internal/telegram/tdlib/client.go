@@ -260,6 +260,9 @@ func (c *NativeClient) submitAuth(ctx context.Context, request map[string]any) e
 			return err
 		}
 	}
+	if err := c.ensureProxyConfigured(ctx); err != nil {
+		return err
+	}
 	if _, err := c.sendAndWait(ctx, request); err != nil {
 		return err
 	}
@@ -297,12 +300,6 @@ func (c *NativeClient) ensureHandle() error {
 }
 
 func (c *NativeClient) advanceAuthorization(ctx context.Context) error {
-	if !c.proxySent {
-		if err := c.applyProxy(ctx); err != nil {
-			return err
-		}
-		c.proxySent = true
-	}
 	for {
 		rawState := c.rawAuthState
 		if rawState == "" {
@@ -324,7 +321,9 @@ func (c *NativeClient) advanceAuthorization(ctx context.Context) error {
 			}); err != nil {
 				return err
 			}
-		case "authorizationStateReady", "authorizationStateWaitPhoneNumber", "authorizationStateWaitCode", "authorizationStateWaitPassword", "authorizationStateClosed", "authorizationStateClosing", "authorizationStateLoggingOut":
+		case "authorizationStateReady", "authorizationStateWaitPhoneNumber", "authorizationStateWaitCode", "authorizationStateWaitPassword":
+			return c.ensureProxyConfigured(ctx)
+		case "authorizationStateClosed", "authorizationStateClosing", "authorizationStateLoggingOut":
 			return nil
 		default:
 			c.rawAuthState = ""
@@ -338,6 +337,17 @@ func (c *NativeClient) sendAuthTransition(ctx context.Context, request map[strin
 	}
 	c.authState = AuthorizationStateUnknown
 	c.rawAuthState = ""
+	return nil
+}
+
+func (c *NativeClient) ensureProxyConfigured(ctx context.Context) error {
+	if c.proxySent || c.cfg.ProxyURL == "" {
+		return nil
+	}
+	if err := c.applyProxy(ctx); err != nil {
+		return err
+	}
+	c.proxySent = true
 	return nil
 }
 
