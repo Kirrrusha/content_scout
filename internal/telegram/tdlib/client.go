@@ -300,6 +300,9 @@ func (c *NativeClient) ensureHandle() error {
 }
 
 func (c *NativeClient) advanceAuthorization(ctx context.Context) error {
+	if err := c.ensureProxyConfigured(ctx); err != nil {
+		return err
+	}
 	for {
 		rawState := c.rawAuthState
 		if rawState == "" {
@@ -322,7 +325,7 @@ func (c *NativeClient) advanceAuthorization(ctx context.Context) error {
 				return err
 			}
 		case "authorizationStateReady", "authorizationStateWaitPhoneNumber", "authorizationStateWaitCode", "authorizationStateWaitPassword":
-			return c.ensureProxyConfigured(ctx)
+			return nil
 		case "authorizationStateClosed", "authorizationStateClosing", "authorizationStateLoggingOut":
 			return nil
 		default:
@@ -451,11 +454,14 @@ func (c *NativeClient) applyProxy(ctx context.Context) error {
 		}
 	}
 	_, err = c.sendAndWait(ctx, map[string]any{
-		"@type":  "addProxy",
-		"server": host,
-		"port":   port,
+		"@type": "addProxy",
+		"proxy": map[string]any{
+			"@type":  "proxy",
+			"server": host,
+			"port":   port,
+			"type":   proxyType,
+		},
 		"enable": true,
-		"type":   proxyType,
 	})
 	return err
 }
