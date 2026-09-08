@@ -38,8 +38,25 @@ dump_diagnostics() {
   compose logs --no-color --tail=200 >&2 || true
 }
 
+# `docker compose` recreates the project network whenever its definition changes,
+# but it refuses to remove a network that still has containers attached and fails
+# with "has active endpoints". Bring the stack down and retry once in that case;
+# named volumes survive `compose down`.
+compose_with_network_recovery() {
+  local output status=0
+  output="$(compose "$@" 2>&1)" || status=$?
+  printf '%s\n' "$output"
+  if [[ "$status" -ne 0 ]] && grep -q 'has active endpoints' <<<"$output"; then
+    echo "project network must be replaced; bringing the stack down first" >&2
+    compose down --remove-orphans
+    compose "$@"
+    return
+  fi
+  return "$status"
+}
+
 compose pull
-compose run --rm volume-permissions
+compose_with_network_recovery run --rm volume-permissions
 compose run --rm migrate
 
 if ! compose up -d --remove-orphans; then

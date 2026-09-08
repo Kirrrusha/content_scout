@@ -21,6 +21,9 @@ ExecStart=/usr/bin/ssh -N \
   ${REMOTE_USER}@${REMOTE_HOST}
 Restart=always
 RestartSec=5
+# The bind address disappears while the docker network is recreated during a
+# deploy, so never let repeated fast restarts trip the start rate limit.
+StartLimitIntervalSec=0
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
