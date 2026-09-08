@@ -17,6 +17,9 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
+// summaryTaskPollInterval paces polling of a queued summary generation job.
+const summaryTaskPollInterval = 3 * time.Second
+
 type APIClient struct {
 	baseURL    string
 	token      string
@@ -153,23 +156,53 @@ func (c *APIClient) CollectGroup(ctx context.Context, req collection.Request) (*
 	}, nil
 }
 
+// GenerateFromCollection queues the work instead of generating inside a single
+// request. The LLM regularly needs longer than the API's write timeout, and a
+// synchronous call was being cut off mid-generation, so the summary is produced
+// by summary-worker and this call polls until the job settles.
 func (c *APIClient) GenerateFromCollection(ctx context.Context, req summary.GenerateRequest) (*summary.GenerateResult, error) {
-	var response summaryAPIResponse
-	path := fmt.Sprintf("/summaries/from-collection/%d", req.CollectionJobID)
+	var task summaryTaskAPIResponse
+	path := fmt.Sprintf("/summaries/from-collection/%d/tasks", req.CollectionJobID)
 	body := summaryAPIRequest{
 		TelegramUserID: req.TelegramUserID,
 		Format:         req.Format,
 	}
-	if err := c.doJSON(ctx, http.MethodPost, path, body, &response); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, path, body, &task); err != nil {
 		return nil, err
 	}
-	return &summary.GenerateResult{
-		SummaryID:      response.SummaryID,
-		SummaryJobID:   response.SummaryJobID,
-		TopicsCount:    response.TopicsCount,
-		MessagesCount:  response.MessagesCount,
-		DuplicateCount: response.DuplicateCount,
-	}, nil
+	return c.waitForSummaryJob(ctx, task.JobID, req.TelegramUserID)
+}
+
+func (c *APIClient) waitForSummaryJob(ctx context.Context, jobID, telegramUserID int64) (*summary.GenerateResult, error) {
+	ticker := time.NewTicker(summaryTaskPollInterval)
+	defer ticker.Stop()
+	path := fmt.Sprintf("/jobs/%d?telegram_user_id=%d", jobID, telegramUserID)
+	for {
+		var job jobAPIResponse
+		if err := c.doJSON(ctx, http.MethodGet, path, nil, &job); err != nil {
+			return nil, err
+		}
+		switch job.Status {
+		case string(domain.JobStatusCompleted):
+			return &summary.GenerateResult{
+				SummaryID:      job.Artifacts.SummaryID,
+				SummaryJobID:   job.Artifacts.SummaryJobID,
+				TopicsCount:    job.Artifacts.TopicsCount,
+				MessagesCount:  job.Artifacts.MessagesCount,
+				DuplicateCount: job.Artifacts.DuplicateCount,
+			}, nil
+		case string(domain.JobStatusFailed), string(domain.JobStatusDead), string(domain.JobStatusCancelled):
+			if job.LastError != nil && *job.LastError != "" {
+				return nil, errors.New(*job.LastError)
+			}
+			return nil, fmt.Errorf("summary generation job %d is %s", jobID, job.Status)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (c *APIClient) doJSON(ctx context.Context, method, path string, body any, target any) error {
@@ -305,12 +338,24 @@ type summaryAPIRequest struct {
 	Format         string `json:"format"`
 }
 
-type summaryAPIResponse struct {
+type summaryTaskAPIResponse struct {
+	JobID  int64  `json:"job_id"`
+	Status string `json:"status"`
+}
+
+type jobArtifactsAPIResponse struct {
 	SummaryID      int64 `json:"summary_id"`
 	SummaryJobID   int64 `json:"summary_job_id"`
 	TopicsCount    int   `json:"topics_count"`
 	MessagesCount  int   `json:"messages_count"`
 	DuplicateCount int   `json:"duplicate_count"`
+}
+
+type jobAPIResponse struct {
+	ID        int64                   `json:"id"`
+	Status    string                  `json:"status"`
+	LastError *string                 `json:"last_error"`
+	Artifacts jobArtifactsAPIResponse `json:"artifacts"`
 }
 
 type apiErrorResponse struct {

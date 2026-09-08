@@ -298,3 +298,58 @@ func (f *fakeReadMarker) MarkCollectedMessagesRead(_ context.Context, telegramUs
 	f.messages = append([]domain.CollectedMessage(nil), messages...)
 	return nil
 }
+
+func TestGenerateFromCollectionMarksJobFailedAfterContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	users := &fakeUsers{user: &domain.User{ID: 1, TelegramUserID: 42}}
+	collections := &fakeCollections{
+		job: &domain.MessageCollectionJob{ID: 10, UserID: 1, GroupID: 7, Status: domain.JobStatusCompleted},
+		messages: []domain.CollectedMessage{
+			{ID: 1001, JobID: 10, UserID: 1, ChatID: 5, MessageID: 101, Date: time.Now(), Text: "Go team published a detailed compiler performance update https://example.com/go"},
+		},
+	}
+	summaries := &cancelAwareSummaries{}
+	chats := &fakeChats{chats: []domain.TelegramChat{{ID: 5, UserID: 1, TelegramChatID: -1005, Title: "Backend"}}}
+	service := NewService(42, users, collections, summaries, chats, newFakePositions(), cancellingSummarizer{cancel: cancel})
+
+	if _, err := service.GenerateFromCollection(ctx, GenerateRequest{
+		TelegramUserID:  42,
+		CollectionJobID: 10,
+		Format:          "standard",
+	}); err == nil {
+		t.Fatal("expected an error when the summarizer fails")
+	}
+	if summaries.sawCancelledCtx {
+		t.Fatal("the failure update ran on the cancelled context")
+	}
+	if summaries.status != domain.JobStatusFailed {
+		t.Fatalf("summary job status = %s, want %s", summaries.status, domain.JobStatusFailed)
+	}
+}
+
+// cancelAwareSummaries fails the status update when it is handed a context that
+// is already done, which is what a real database driver does.
+type cancelAwareSummaries struct {
+	fakeSummaries
+	sawCancelledCtx bool
+}
+
+func (f *cancelAwareSummaries) UpdateJobStatus(ctx context.Context, jobID int64, status domain.JobStatus, message *string) error {
+	if err := ctx.Err(); err != nil {
+		f.sawCancelledCtx = true
+		return err
+	}
+	return f.fakeSummaries.UpdateJobStatus(ctx, jobID, status, message)
+}
+
+// cancellingSummarizer imitates the caller's context expiring mid-generation.
+type cancellingSummarizer struct {
+	fakeSummarizer
+	cancel context.CancelFunc
+}
+
+func (s cancellingSummarizer) Summarize(context.Context, llm.SummaryInput) (*llm.SummaryResult, error) {
+	s.cancel()
+	return nil, context.Canceled
+}

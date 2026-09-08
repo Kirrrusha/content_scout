@@ -13,6 +13,9 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
+// markFailedTimeout bounds the out-of-band UPDATE that records a job failure.
+const markFailedTimeout = 5 * time.Second
+
 type Request struct {
 	TelegramUserID int64
 	GroupID        int64
@@ -90,13 +93,11 @@ func (s *Service) CollectGroup(ctx context.Context, req Request) (*Result, error
 
 	collected, chatsCount, collectErr := s.collectMessages(ctx, user.ID, job.ID, req, groupLinks, chatMap, client)
 	if collectErr != nil {
-		message := collectErr.Error()
-		_ = s.collections.UpdateJobStatus(ctx, job.ID, domain.JobStatusFailed, &message)
+		s.markJobFailed(ctx, job.ID, collectErr)
 		return nil, collectErr
 	}
 	if err := s.collections.AddMessages(ctx, collected); err != nil {
-		message := err.Error()
-		_ = s.collections.UpdateJobStatus(ctx, job.ID, domain.JobStatusFailed, &message)
+		s.markJobFailed(ctx, job.ID, err)
 		return nil, err
 	}
 	if err := s.collections.UpdateJobStatus(ctx, job.ID, domain.JobStatusCompleted, nil); err != nil {
@@ -240,4 +241,15 @@ func collectedMessage(userID, jobID int64, chat domain.TelegramChat, message dom
 		HasMedia:       message.HasMedia,
 		MediaType:      message.MediaType,
 	}
+}
+
+// markJobFailed records a failure even when ctx is already done. The usual cause
+// of a failure here is the caller's context being cancelled or timing out, and
+// reusing that context would make the UPDATE fail too, leaving the job row stuck
+// in a running state forever.
+func (s *Service) markJobFailed(ctx context.Context, jobID int64, cause error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markFailedTimeout)
+	defer cancel()
+	message := cause.Error()
+	_ = s.collections.UpdateJobStatus(ctx, jobID, domain.JobStatusFailed, &message)
 }

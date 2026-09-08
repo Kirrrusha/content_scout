@@ -17,6 +17,9 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
+// markFailedTimeout bounds the out-of-band UPDATE that records a job failure.
+const markFailedTimeout = 5 * time.Second
+
 type Service struct {
 	ownerTelegramID int64
 	users           storage.UserRepository
@@ -112,8 +115,7 @@ func (s *Service) GenerateFromCollection(ctx context.Context, req GenerateReques
 	input := summaryInput(processed, req.Format, chatByID)
 	llmResult, err := s.summarizer.Summarize(ctx, input)
 	if err != nil {
-		message := err.Error()
-		_ = s.summaries.UpdateJobStatus(ctx, summaryJob.ID, domain.JobStatusFailed, &message)
+		s.markJobFailed(ctx, summaryJob.ID, err)
 		return nil, err
 	}
 	topics := topicsFromResult(llmResult, processed, chatByID)
@@ -127,8 +129,7 @@ func (s *Service) GenerateFromCollection(ctx context.Context, req GenerateReques
 		Markdown:      renderMarkdown(llmResult, processed, chatByID),
 	}, topics)
 	if err != nil {
-		message := err.Error()
-		_ = s.summaries.UpdateJobStatus(ctx, summaryJob.ID, domain.JobStatusFailed, &message)
+		s.markJobFailed(ctx, summaryJob.ID, err)
 		return nil, err
 	}
 	if err := s.summaries.UpdateJobStatus(ctx, summaryJob.ID, domain.JobStatusCompleted, nil); err != nil {
@@ -415,4 +416,15 @@ func distinctChatCount(messages []domain.CollectedMessage) int {
 		seen[message.ChatID] = struct{}{}
 	}
 	return len(seen)
+}
+
+// markJobFailed records a failure even when ctx is already done. The usual cause
+// of a failure here is the caller's context being cancelled or timing out, and
+// reusing that context would make the UPDATE fail too, leaving the job row stuck
+// in a running state forever.
+func (s *Service) markJobFailed(ctx context.Context, jobID int64, cause error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markFailedTimeout)
+	defer cancel()
+	message := cause.Error()
+	_ = s.summaries.UpdateJobStatus(ctx, jobID, domain.JobStatusFailed, &message)
 }
