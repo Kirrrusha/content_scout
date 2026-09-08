@@ -3,7 +3,21 @@ name: content-scout
 x-app-env-file: &app-env-file
   - ${CONTENT_SCOUT_ENV_FILE:-.env}
 
+x-app-user: &app-user ${APP_UID:-10001}:${APP_GID:-10001}
+
 services:
+  volume-permissions:
+    image: alpine:3.22
+    command:
+      - sh
+      - -c
+      - chown -R "${APP_UID:-10001}:${APP_GID:-10001}" /data/logs /data/tdlib /data/exports
+    restart: "no"
+    volumes:
+      - tdlib_data:/data/tdlib
+      - exports:/data/exports
+      - logs:/data/logs
+
   postgres:
     image: postgres:17-alpine
     environment:
@@ -21,8 +35,11 @@ services:
 
   migrate:
     image: ${CLOUDRU_REGISTRY:?CLOUDRU_REGISTRY is required}/content_scout-migrate:${IMAGE_TAG:?IMAGE_TAG is required}
+    user: *app-user
     env_file: *app-env-file
     depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     command: ["-direction", "up", "-dir", "migrations"]
@@ -32,8 +49,11 @@ services:
 
   api:
     image: ${CLOUDRU_REGISTRY:?CLOUDRU_REGISTRY is required}/content_scout-api:${IMAGE_TAG:?IMAGE_TAG is required}
+    user: *app-user
     env_file: *app-env-file
     depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     ports:
@@ -51,10 +71,13 @@ services:
 
   bot:
     image: ${CLOUDRU_REGISTRY:?CLOUDRU_REGISTRY is required}/content_scout-bot:${IMAGE_TAG:?IMAGE_TAG is required}
+    user: *app-user
     env_file: *app-env-file
     environment:
       INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:8080}
     depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
     restart: unless-stopped
@@ -64,7 +87,11 @@ services:
 
   tdlib-worker:
     image: ${CLOUDRU_REGISTRY:?CLOUDRU_REGISTRY is required}/content_scout-tdlib-worker:${IMAGE_TAG:?IMAGE_TAG is required}
+    user: *app-user
     env_file: *app-env-file
+    depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
     restart: unless-stopped
     volumes:
       - tdlib_data:/data/tdlib
@@ -72,7 +99,11 @@ services:
 
   summary-worker:
     image: ${CLOUDRU_REGISTRY:?CLOUDRU_REGISTRY is required}/content_scout-summary-worker:${IMAGE_TAG:?IMAGE_TAG is required}
+    user: *app-user
     env_file: *app-env-file
+    depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
     restart: unless-stopped
     volumes:
       - exports:/data/exports

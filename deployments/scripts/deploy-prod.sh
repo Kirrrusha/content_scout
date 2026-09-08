@@ -39,6 +39,7 @@ dump_diagnostics() {
 }
 
 compose pull
+compose run --rm volume-permissions
 compose run --rm migrate
 
 if ! compose up -d --remove-orphans; then
