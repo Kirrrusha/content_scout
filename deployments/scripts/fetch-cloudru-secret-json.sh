@@ -49,6 +49,7 @@ if [[ -n "${CLOUDRU_SECRET_ID:-}" ]]; then
   echo "Fetching Cloud.ru secret by id from $api_url/secrets/<redacted>" >&2
   curl -fsS \
     -H "Accept: application/json" \
+    -H "Content-Type: application/json" \
     -H "Authorization: Bearer $access_token" \
     "$api_url/secrets/$CLOUDRU_SECRET_ID" >"$secret_response"
 else
@@ -57,6 +58,7 @@ else
   curl -fsS \
     -G \
     -H "Accept: application/json" \
+    -H "Content-Type: application/json" \
     -H "Authorization: Bearer $access_token" \
     --data-urlencode "parent_id=$CLOUDRU_SECRET_PROJECT_ID" \
     --data-urlencode "name=$secret_name" \
