@@ -11,8 +11,13 @@ output_file="$1"
 : "${CLOUDRU_SECRET_KEY_ID:?CLOUDRU_SECRET_KEY_ID is required}"
 : "${CLOUDRU_SECRET_KEY_SECRET:?CLOUDRU_SECRET_KEY_SECRET is required}"
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is required" >&2
+  exit 1
+fi
+
 secret_name="${CLOUDRU_SECRET_NAME:-content-scout-prod-env}"
-auth_url="${CLOUDRU_AUTH_URL:-https://id.cloud.ru/auth/system/openid/token}"
+auth_url="${CLOUDRU_AUTH_URL:-https://iam.api.cloud.ru/api/v1/auth/token}"
 api_url="${CLOUDRU_SECRET_MANAGER_API_URL:-https://secretmanager.api.cloud.ru/v1}"
 
 token_response="$(mktemp)"
@@ -20,10 +25,18 @@ secret_response="$(mktemp)"
 decoded_secret="$(mktemp)"
 trap 'rm -f "$token_response" "$secret_response" "$decoded_secret"' EXIT
 
+auth_payload="$(
+  jq -n \
+    --arg key_id "$CLOUDRU_SECRET_KEY_ID" \
+    --arg secret "$CLOUDRU_SECRET_KEY_SECRET" \
+    '{keyId: $key_id, secret: $secret}'
+)"
+
+echo "Requesting Cloud.ru IAM token from $auth_url" >&2
 curl -fsS \
-  --data-urlencode 'grant_type=access_key' \
-  --data-urlencode "client_id=$CLOUDRU_SECRET_KEY_ID" \
-  --data-urlencode "client_secret=$CLOUDRU_SECRET_KEY_SECRET" \
+  -H 'Accept: application/json' \
+  -H 'Content-Type: application/json' \
+  --data "$auth_payload" \
   "$auth_url" >"$token_response"
 
 access_token="$(jq -r '.access_token // empty' "$token_response")"
@@ -33,13 +46,17 @@ if [[ -z "$access_token" ]]; then
 fi
 
 if [[ -n "${CLOUDRU_SECRET_ID:-}" ]]; then
+  echo "Fetching Cloud.ru secret by id from $api_url/secrets/<redacted>" >&2
   curl -fsS \
+    -H "Accept: application/json" \
     -H "Authorization: Bearer $access_token" \
     "$api_url/secrets/$CLOUDRU_SECRET_ID" >"$secret_response"
 else
   : "${CLOUDRU_SECRET_PROJECT_ID:?CLOUDRU_SECRET_PROJECT_ID is required when CLOUDRU_SECRET_ID is not set}"
+  echo "Fetching Cloud.ru secret by name from $api_url/secrets" >&2
   curl -fsS \
     -G \
+    -H "Accept: application/json" \
     -H "Authorization: Bearer $access_token" \
     --data-urlencode "parent_id=$CLOUDRU_SECRET_PROJECT_ID" \
     --data-urlencode "name=$secret_name" \

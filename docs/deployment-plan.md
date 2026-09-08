@@ -14,7 +14,7 @@
 
 ---
 
-## 1. CI (GitHub Actions)
+## 1. CI (GitVerse)
 
 Что уже есть: `go vet`, `go test` с Postgres 17, `go build`, docker build api-образа.
 
@@ -23,7 +23,7 @@
 | Проверка | Инструмент | Зачем |
 |---|---|---|
 | Форматирование | `gofmt -l .` (fail если непусто) | Единый стиль без споров |
-| Линтер | `golangci-lint` (action `golangci/golangci-lint-action`) | Включает staticcheck, errcheck, ineffassign, unused и др. — де-факто стандарт |
+| Линтер | `golangci-lint` | Включает staticcheck, errcheck, ineffassign, unused и др. — де-факто стандарт |
 | Гонки | `go test -race ./...` | У вас воркеры и очередь — data race реален |
 | Уязвимости | `govulncheck ./...` (официальный от Go team) | Проверка зависимостей по Go vuln DB |
 | Docker-сборка всех образов | matrix по Dockerfile'ам | Сейчас собирается только api |
@@ -42,7 +42,7 @@ ci.yml
 
 - `golangci-lint` требует конфиг `.golangci.yml` — начать с дефолтного набора, не включать всё сразу.
 - tdlib-worker собирается с CGO и тегом `tdlib` — в CI нужен шаг с установленным TDLib либо сборка только внутри Docker-образа (проще второе: проверять компиляцию через `docker build`).
-- Кэш Go-модулей `actions/setup-go@v5` включает автоматически.
+- GitVerse workflow сейчас использует совместимые `actions/checkout@v4` и `actions/setup-go@v5`.
 
 ## 2. CD — cloud.ru Artifact Registry + деплой
 
@@ -50,9 +50,9 @@ ci.yml
 
 - Создать реестр в cloud.ru Artifact Registry → адрес вида `<registry-name>.cr.cloud.ru`.
 - Создать сервисный аккаунт с ролью на push, получить Key ID / Key Secret.
-- Положить в GitHub Secrets: `CLOUDRU_REGISTRY`, `CLOUDRU_KEY_ID`, `CLOUDRU_KEY_SECRET`.
+- Положить в GitVerse Secrets: `CLOUDRU_REGISTRY`, `CLOUDRU_REGISTRY_KEY_ID`, `CLOUDRU_REGISTRY_KEY_SECRET`.
 
-### 2.2 Workflow `cd.yml`
+### 2.2 Workflow `.gitverse/workflows/deploy.yml`
 
 Триггер: push в `main` (или тег `v*` — когда захочется явных релизов).
 
@@ -80,7 +80,7 @@ jobs:
 - Docker + docker compose plugin.
 - `deployments/compose/docker-compose.prod.yml` — production compose-файл: образы из registry (не build), `restart: unless-stopped`.
 - `api` и `tdlib-worker` собираются поверх prebuilt образа `content_scout-tdlib-base:latest`, чтобы GitVerse cloud runner не компилировал TDLib при каждом деплое.
-- Секреты: источник правды Cloud.ru Secret Management; GitHub Actions подтягивает JSON-секрет, временно копирует его на VM, deploy-скрипт рендерит `/opt/content_scout/.env` с `chmod 600` и удаляет исходный JSON.
+- Секреты: источник правды Cloud.ru Secret Management; GitVerse workflow подтягивает JSON-секрет, временно копирует его на VM, deploy-скрипт рендерит `/opt/content_scout/.env` с `chmod 600` и удаляет исходный JSON.
 - SSH host key: CD сверяет ED25519 fingerprint из `SSH_HOST_ED25519_FINGERPRINT` перед добавлением host key в `known_hosts`.
 - Registry login: пароль registry передается на VM через SSH stdin; Docker credentials пишутся только во временный `DOCKER_CONFIG`, который удаляется после деплоя.
 - Postgres: контейнер с Docker volume, без публикации порта наружу.

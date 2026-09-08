@@ -1,9 +1,9 @@
 # Production Deployment
 
 Production runs on one Cloud.ru VM with Docker Compose. Images are built by
-GitHub Actions and pushed to Cloud.ru Artifact Registry.
+GitVerse CI/CD and pushed to Cloud.ru Artifact Registry.
 
-## Required GitHub Secrets
+## Required GitVerse Secrets
 
 - `CLOUDRU_REGISTRY` (`kirrrusha.cr.cloud.ru` for the current Cloud.ru registry)
 - `CLOUDRU_REGISTRY_KEY_ID`
@@ -62,13 +62,12 @@ Or copy and run `deployments/scripts/bootstrap-vm.sh` manually as user `scout`.
 It installs Docker, Docker Compose, `jq`, configures 2 GB swap, prepares
 `/opt/content_scout`, and enables UFW with SSH open.
 
-After the GitHub secrets and Cloud.ru secret are present, successful `ci` runs
-on `main` trigger `.github/workflows/cd.yml`. It can also be started manually
-with `workflow_dispatch`.
+After the GitVerse secrets and Cloud.ru secret are present, pushes to `main`
+trigger `.gitverse/workflows/deploy.yml`. It can also be started manually with
+`workflow_dispatch`.
 
-GitVerse can use the same secret names in `.gitverse/workflows/deploy.yml`.
-Enable CI/CD in repository settings before relying on that workflow. The
-GitVerse workflow uses Kaniko because Cloud-hosted GitVerse runners do not
+Enable CI/CD in GitVerse repository settings before relying on that workflow.
+The GitVerse workflow uses Kaniko because Cloud-hosted GitVerse runners do not
 provide Docker socket access.
 
 `api` and `tdlib-worker` use a prebuilt TDLib base image so regular CI/CD does
