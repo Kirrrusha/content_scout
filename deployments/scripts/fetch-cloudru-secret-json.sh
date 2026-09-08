@@ -17,6 +17,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 secret_name="${CLOUDRU_SECRET_NAME:-content-scout-prod-env}"
+secret_version="${CLOUDRU_SECRET_VERSION:-latest}"
 auth_url="${CLOUDRU_AUTH_URL:-https://iam.api.cloud.ru/api/v1/auth/token}"
 api_url="${CLOUDRU_SECRET_MANAGER_API_URL:-https://secretmanager.api.cloud.ru/v1}"
 
@@ -65,18 +66,66 @@ else
     "$api_url/secrets" >"$secret_response"
 fi
 
-secret_payload="$(
+extract_payload() {
   jq -r '
     .payload.data.value
+    // .payload.data
     // .secret.payload.data.value
+    // .secret.payload.data
+    // .secret_version.payload.data.value
+    // .secret_version.payload.data
+    // .version.payload.data.value
+    // .version.payload.data
     // .secrets[0].payload.data.value
+    // .secrets[0].payload.data
     // .items[0].payload.data.value
+    // .items[0].payload.data
+    // .data.value
+    // .value
     // empty
-  ' "$secret_response"
-)"
+  ' "$1"
+}
+
+secret_payload="$(extract_payload "$secret_response")"
 
 if [[ -z "$secret_payload" ]]; then
-  echo "Cloud.ru Secret Manager response did not include payload.data.value" >&2
+  resolved_secret_id="${CLOUDRU_SECRET_ID:-}"
+  if [[ -z "$resolved_secret_id" ]]; then
+    resolved_secret_id="$(
+      jq -r '
+        .id
+        // .secret.id
+        // .secrets[0].id
+        // .items[0].id
+        // empty
+      ' "$secret_response"
+    )"
+  fi
+
+  if [[ -z "$resolved_secret_id" ]]; then
+    echo "Cloud.ru Secret Manager response did not include secret id or payload data" >&2
+    exit 1
+  fi
+
+  echo "Fetching Cloud.ru secret version $secret_version from $api_url/secrets/<redacted>/versions/<redacted>" >&2
+  if ! curl -fsS \
+    -H "Accept: application/json" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $access_token" \
+    "$api_url/secrets/$resolved_secret_id/versions/$secret_version" >"$secret_response"; then
+    echo "Retrying Cloud.ru secret version with access endpoint" >&2
+    curl -fsS \
+      -H "Accept: application/json" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $access_token" \
+      "$api_url/secrets/$resolved_secret_id/versions/$secret_version:access" >"$secret_response"
+  fi
+
+  secret_payload="$(extract_payload "$secret_response")"
+fi
+
+if [[ -z "$secret_payload" ]]; then
+  echo "Cloud.ru Secret Manager response did not include payload data" >&2
   exit 1
 fi
 
