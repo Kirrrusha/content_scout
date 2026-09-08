@@ -71,6 +71,21 @@ Enable CI/CD in repository settings before relying on that workflow. The
 GitVerse workflow uses Kaniko because Cloud-hosted GitVerse runners do not
 provide Docker socket access.
 
+`api` and `tdlib-worker` use a prebuilt TDLib base image so regular CI/CD does
+not compile TDLib on every run:
+
+```text
+kirrrusha.cr.cloud.ru/content_scout-tdlib-base:latest
+```
+
+Build and push it only when TDLib needs to be updated:
+
+```sh
+CLOUDRU_REGISTRY=kirrrusha.cr.cloud.ru deployments/scripts/build-tdlib-base.sh
+```
+
+Run `docker login kirrrusha.cr.cloud.ru` before this command.
+
 For the current VM `88.218.67.232`, set:
 
 ```text

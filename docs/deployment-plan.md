@@ -79,6 +79,7 @@ jobs:
 
 - Docker + docker compose plugin.
 - `deployments/compose/docker-compose.prod.yml` — production compose-файл: образы из registry (не build), `restart: unless-stopped`.
+- `api` и `tdlib-worker` собираются поверх prebuilt образа `content_scout-tdlib-base:latest`, чтобы GitVerse cloud runner не компилировал TDLib при каждом деплое.
 - Секреты: источник правды Cloud.ru Secret Management; GitHub Actions подтягивает JSON-секрет, временно копирует его на VM, deploy-скрипт рендерит `/opt/content_scout/.env` с `chmod 600` и удаляет исходный JSON.
 - SSH host key: CD сверяет ED25519 fingerprint из `SSH_HOST_ED25519_FINGERPRINT` перед добавлением host key в `known_hosts`.
 - Registry login: пароль registry передается на VM через SSH stdin; Docker credentials пишутся только во временный `DOCKER_CONFIG`, который удаляется после деплоя.
