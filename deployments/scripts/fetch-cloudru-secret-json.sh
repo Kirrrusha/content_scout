@@ -113,15 +113,20 @@ if [[ -z "$secret_payload" ]]; then
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $access_token" \
     "$api_url/secrets/$resolved_secret_id/versions/$secret_version" >"$secret_response"; then
-    echo "Retrying Cloud.ru secret version with access endpoint" >&2
+    : >"$secret_response"
+  fi
+
+  secret_payload="$(extract_payload "$secret_response")"
+
+  if [[ -z "$secret_payload" ]]; then
+    echo "Fetching Cloud.ru secret version payload from access endpoint" >&2
     curl -fsS \
       -H "Accept: application/json" \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $access_token" \
       "$api_url/secrets/$resolved_secret_id/versions/$secret_version:access" >"$secret_response"
+    secret_payload="$(extract_payload "$secret_response")"
   fi
-
-  secret_payload="$(extract_payload "$secret_response")"
 fi
 
 if [[ -z "$secret_payload" ]]; then
