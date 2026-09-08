@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/kirilllebedenko/content_scout/internal/config"
 	"github.com/kirilllebedenko/content_scout/internal/logging"
@@ -40,4 +43,9 @@ func main() {
 		}
 	}()
 	logger.Info("tdlib worker is ready", "adapter_mode", tdlib.AdapterMode())
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+	logger.Info("tdlib worker stopped")
 }

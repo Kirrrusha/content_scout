@@ -67,7 +67,7 @@ func NewServiceWithProxy(token, proxyURL string, ownerID int64, auth AuthControl
 	}
 	api, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
-		return nil, fmt.Errorf("create telegram bot api: %w", err)
+		return nil, fmt.Errorf("create telegram bot api: %s", redactTelegramBotToken(err.Error(), token))
 	}
 	return &Service{
 		api:    api,
@@ -428,6 +428,13 @@ func previewText(text string, limit int) string {
 		return text
 	}
 	return string(runes[:limit-1]) + "…"
+}
+
+func redactTelegramBotToken(message, token string) string {
+	if token == "" {
+		return message
+	}
+	return strings.ReplaceAll(message, token, "<redacted>")
 }
 
 func incomingFromUpdate(update tgbotapi.Update) (Incoming, bool) {
