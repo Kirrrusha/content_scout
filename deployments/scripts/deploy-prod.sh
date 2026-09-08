@@ -27,7 +27,24 @@ rm -f "$secret_json_file"
 
 export CONTENT_SCOUT_ENV_FILE="$env_file"
 
-docker compose --env-file "$env_file" -f "$compose_file" pull
-docker compose --env-file "$env_file" -f "$compose_file" run --rm migrate
-docker compose --env-file "$env_file" -f "$compose_file" up -d --remove-orphans
-docker compose --env-file "$env_file" -f "$compose_file" ps
+compose() {
+  docker compose --env-file "$env_file" -f "$compose_file" "$@"
+}
+
+dump_diagnostics() {
+  echo "=== docker compose ps -a ===" >&2
+  compose ps -a >&2 || true
+  echo "=== docker compose logs (tail 200) ===" >&2
+  compose logs --no-color --tail=200 >&2 || true
+}
+
+compose pull
+compose run --rm migrate
+
+if ! compose up -d --remove-orphans; then
+  echo "docker compose up failed" >&2
+  dump_diagnostics
+  exit 1
+fi
+
+compose ps
