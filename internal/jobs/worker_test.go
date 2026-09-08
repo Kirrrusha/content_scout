@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -97,6 +98,8 @@ type fakeJobRepo struct {
 	retryID         int64
 	retryAt         time.Time
 	deadID          int64
+	mu              sync.Mutex
+	extendCalls     int
 }
 
 func discardLogger() *slog.Logger {
@@ -143,7 +146,16 @@ func (f *fakeJobRepo) RecoverExpiredLeases(context.Context) (int64, error) {
 }
 
 func (f *fakeJobRepo) ExtendLease(context.Context, int64, string, time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.extendCalls++
 	return nil
+}
+
+func (f *fakeJobRepo) extendLeaseCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.extendCalls
 }
 
 type fakePipelineScheduler struct {
@@ -171,4 +183,28 @@ type fakeSummaryGenerator struct {
 func (f *fakeSummaryGenerator) GenerateFromCollection(_ context.Context, req summary.GenerateRequest) (*summary.GenerateResult, error) {
 	f.request = req
 	return f.result, nil
+}
+
+func TestRunOnceExtendsLeaseWhileHandlerRuns(t *testing.T) {
+	repo := &fakeJobRepo{job: &domain.Job{ID: 9, Type: domain.JobTypeSummaryGeneration, Attempt: 1, MaxAttempts: 1}}
+	worker := NewWorker(repo, HandlerFunc(func(context.Context, domain.Job) error {
+		// Outlive the lease the way summary generation does.
+		time.Sleep(250 * time.Millisecond)
+		return nil
+	}), discardLogger(), "worker-1")
+	worker.lease = 90 * time.Millisecond
+
+	claimed, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if !claimed {
+		t.Fatal("RunOnce() did not claim the job")
+	}
+	if got := repo.extendLeaseCalls(); got == 0 {
+		t.Fatal("the lease was never extended while the handler was running")
+	}
+	if repo.completedID != 9 {
+		t.Fatalf("completed job = %d, want 9", repo.completedID)
+	}
 }

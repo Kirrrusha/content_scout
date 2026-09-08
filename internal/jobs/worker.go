@@ -66,12 +66,14 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	start := w.now()
 	logger := w.logger.With("job_id", job.ID, "job_type", job.Type, "attempt", job.Attempt, "worker_id", w.id)
 	logger.Info("job started")
+	stopHeartbeat := w.keepLeaseAlive(ctx, job.ID, logger)
 	var result []byte
 	if resultHandler, ok := w.handler.(ResultHandler); ok {
 		result, err = resultHandler.HandleJobWithResult(ctx, *job)
 	} else {
 		err = w.handler.HandleJob(ctx, *job)
 	}
+	stopHeartbeat()
 	duration := w.now().Sub(start)
 	if err == nil {
 		if completeErr := w.repo.CompleteWithResult(ctx, job.ID, result); completeErr != nil {
@@ -94,6 +96,40 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	}
 	logger.Warn("job retry scheduled", "duration_ms", duration.Milliseconds(), "result", "retry", "available_at", availableAt, "error", err)
 	return true, nil
+}
+
+// keepLeaseAlive extends the job's lease while the handler runs. Without it a
+// handler that outlives the lease, which summary generation regularly does, gets
+// its job reclaimed by RecoverExpiredLeases and re-run while the original call is
+// still working. The returned function stops the heartbeat.
+func (w *Worker) keepLeaseAlive(ctx context.Context, jobID int64, logger *slog.Logger) func() {
+	interval := w.lease / 3
+	if interval <= 0 {
+		return func() {}
+	}
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := w.repo.ExtendLease(ctx, jobID, w.id, w.lease); err != nil {
+					logger.Warn("extend job lease failed", "error", err)
+				}
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-stopped
+	}
 }
 
 func backoff(attempt int) time.Duration {
