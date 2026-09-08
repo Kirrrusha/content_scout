@@ -37,4 +37,7 @@ sudo mkdir -p "$release_dir"
 sudo chown -R scout:scout "$release_dir"
 
 sudo ufw allow OpenSSH
+# Containers reach the SOCKS tunnel through the docker network gateway; the
+# subnet is pinned in deployments/compose/docker-compose.prod.yml.
+sudo ufw allow from 172.18.0.0/16 to 172.18.0.1 port 1080 proto tcp comment 'socks tunnel for containers'
 sudo ufw --force enable

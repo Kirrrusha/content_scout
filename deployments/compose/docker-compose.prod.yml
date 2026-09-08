@@ -114,3 +114,13 @@ volumes:
   tdlib_data:
   exports:
   logs:
+
+# The SOCKS tunnel to the proxy VM is bound to this network's gateway address on
+# the host, so the subnet must stay stable across network recreation. Changing it
+# requires updating TELEGRAM_PROXY_URL in Cloud.ru Secret Management as well.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
+          gateway: 172.18.0.1

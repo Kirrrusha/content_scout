@@ -1,0 +1,30 @@
+[Unit]
+Description=SOCKS tunnel from the app VM to the content_scout proxy VM
+Documentation=https://gitverse.ru/kirrrusha/content_scout/blob/main/docs/socks-tunnel.md
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+User=scout
+EnvironmentFile=/etc/content_scout/socks-tunnel.env
+# ExitOnForwardFailure makes ssh fail fast when the bind address does not exist
+# yet (the docker bridge is created by docker.service), and Restart retries it.
+ExecStart=/usr/bin/ssh -N \
+  -o BatchMode=yes \
+  -o ExitOnForwardFailure=yes \
+  -o StrictHostKeyChecking=yes \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -i ${TUNNEL_KEY} \
+  -L ${BIND_ADDRESS}:${BIND_PORT}:127.0.0.1:${REMOTE_SOCKS_PORT} \
+  ${REMOTE_USER}@${REMOTE_HOST}
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
