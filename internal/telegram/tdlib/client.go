@@ -453,7 +453,7 @@ func (c *NativeClient) applyProxy(ctx context.Context) error {
 			proxyType["password"] = password
 		}
 	}
-	_, err = c.sendAndWait(ctx, map[string]any{
+	return c.send(ctx, map[string]any{
 		"@type": "addProxy",
 		"proxy": map[string]any{
 			"@type":  "proxy",
@@ -463,7 +463,6 @@ func (c *NativeClient) applyProxy(ctx context.Context) error {
 		},
 		"enable": true,
 	})
-	return err
 }
 
 func (c *NativeClient) tdlibParameters() map[string]any {
