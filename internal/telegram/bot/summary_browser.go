@@ -123,9 +123,13 @@ func (r *Router) renderSummary(ctx context.Context, chatID, userID, summaryID in
 	if err != nil {
 		return Outgoing{ChatID: chatID, Text: publicAuthError(err), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 	}
+	topics, err := r.browser.ListTopics(ctx, userID, summaryID)
+	if err != nil {
+		return Outgoing{ChatID: chatID, Text: publicAuthError(err), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	}
 	return Outgoing{
 		ChatID:         chatID,
-		Text:           summaryText(*item),
+		Text:           summaryText(*item, topics...),
 		ParseMode:      "HTML",
 		Menu:           summaryMenu(item.ID),
 		EditMessageID:  editMessageID,
@@ -166,10 +170,14 @@ func summariesListText(items []domain.Summary) string {
 	return b.String()
 }
 
-func summaryText(item domain.Summary) string {
-	text := fmt.Sprintf("🗞 <b>%s</b>\n\n%s\n\n📌 <b>%s</b> · %s · %s",
-		escapeHTML(fallbackTitle(item.Title)),
-		telegramHTMLText(fallbackTitle(item.Overview)),
+func summaryText(item domain.Summary, topics ...domain.SummaryTopic) string {
+	text := fmt.Sprintf("🗞 <b>%s</b>", escapeHTML(fallbackTitle(item.Title)))
+	if topicIndex := summaryTopicIndexText(topics); topicIndex != "" {
+		text += "\n\n" + topicIndex
+	} else {
+		text += "\n\n" + telegramHTMLText(fallbackTitle(item.Overview))
+	}
+	text += fmt.Sprintf("\n\n📌 <b>%s</b> · %s · %s",
 		countLabel(item.TopicsCount, "тема", "темы", "тем"),
 		summaryMessageUsage(item),
 		countLabel(item.SourcesCount, "источник", "источника", "источников"),
@@ -178,6 +186,32 @@ func summaryText(item domain.Summary) string {
 		text += "\n\n<b>Исключено из сводки</b>\n" + excluded
 	}
 	return fmt.Sprintf("%s\n<code>Сводка #%d</code>", text, item.ID)
+}
+
+func summaryTopicIndexText(topics []domain.SummaryTopic) string {
+	if len(topics) == 0 {
+		return ""
+	}
+	descriptionLimit := 220
+	if perTopic := 3000/len(topics) - 80; perTopic < descriptionLimit {
+		descriptionLimit = max(perTopic, 40)
+	}
+	blocks := make([]string, 0, len(topics))
+	for index, topic := range topics {
+		title := compactText(fallbackTitle(topic.Title), 72)
+		description := compactText(fallbackTitle(topic.ShortSummary), descriptionLimit)
+		blocks = append(blocks, fmt.Sprintf("<b>%d. %s</b>\n%s", index+1, escapeHTML(title), escapeHTML(description)))
+	}
+	return strings.Join(blocks, "\n\n")
+}
+
+func compactText(value string, limit int) string {
+	value = strings.TrimSpace(strings.Join(strings.Fields(value), " "))
+	if limit <= 0 || len([]rune(value)) <= limit {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:limit-1]) + "…"
 }
 
 func topicCardText(card summary.TopicCard) string {

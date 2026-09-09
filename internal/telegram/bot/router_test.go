@@ -682,6 +682,10 @@ func TestRouterSummaryOpenCallback(t *testing.T) {
 	ctx := context.Background()
 	browser := &fakeSummaryBrowserController{
 		summary: &domain.Summary{ID: 10, Title: "Digest", Overview: "Overview", TopicsCount: 2, MessagesCount: 12, SourcesCount: 3},
+		topics: []domain.SummaryTopic{
+			{Title: "Первая тема", ShortSummary: "Короткое описание первой темы."},
+			{Title: "Вторая тема", ShortSummary: "Короткое описание второй темы."},
+		},
 	}
 	router := NewRouterWithBrowser(42, NewMemoryStateStore(), nil, nil, nil, nil, nil, browser)
 
@@ -705,7 +709,7 @@ func TestRouterSummaryOpenCallback(t *testing.T) {
 	if out.ParseMode != "HTML" {
 		t.Fatalf("parse mode = %q, want HTML", out.ParseMode)
 	}
-	if !strings.Contains(out.Text, "Сводка #10") || out.Menu[0][0].Data != "sum:topic:10:1" {
+	if !strings.Contains(out.Text, "Сводка #10") || !strings.Contains(out.Text, "<b>1. Первая тема</b>") || !strings.Contains(out.Text, "Короткое описание второй темы.") || out.Menu[0][0].Data != "sum:topic:10:1" {
 		t.Fatalf("output = %q menu=%+v", out.Text, out.Menu)
 	}
 }
@@ -783,6 +787,32 @@ func TestSummaryTextEscapesModelContent(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("summaryText() = %q, want fragment %q", got, want)
 		}
+	}
+}
+
+func TestSummaryTextShowsEveryTopicAsTitleAndShortDescription(t *testing.T) {
+	got := summaryText(domain.Summary{
+		ID:          10,
+		Title:       "Главное за день",
+		Overview:    "Этот общий обзор не нужен, когда есть темы.",
+		TopicsCount: 2,
+	},
+		domain.SummaryTopic{Title: "Первая <тема>", ShortSummary: "Первое короткое описание."},
+		domain.SummaryTopic{Title: "Вторая тема", ShortSummary: "Второе короткое описание."},
+	)
+
+	for _, want := range []string{
+		"<b>1. Первая &lt;тема&gt;</b>",
+		"Первое короткое описание.",
+		"<b>2. Вторая тема</b>",
+		"Второе короткое описание.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summaryText() = %q, want fragment %q", got, want)
+		}
+	}
+	if strings.Contains(got, "Этот общий обзор") {
+		t.Fatalf("summaryText() = %q, should replace overview with topic index", got)
 	}
 }
 
