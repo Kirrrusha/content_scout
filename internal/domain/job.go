@@ -46,9 +46,11 @@ type JobPayloadSummaryGeneration struct {
 }
 
 type JobResultSummaryGeneration struct {
-	SummaryID      int64 `json:"summary_id"`
-	SummaryJobID   int64 `json:"summary_job_id"`
-	TopicsCount    int   `json:"topics_count"`
-	MessagesCount  int   `json:"messages_count"`
-	DuplicateCount int   `json:"duplicate_count"`
+	SummaryID             int64 `json:"summary_id"`
+	SummaryJobID          int64 `json:"summary_job_id"`
+	TopicsCount           int   `json:"topics_count"`
+	MessagesCount         int   `json:"messages_count"`
+	UsedMessagesCount     int   `json:"used_messages_count"`
+	ExcludedMessagesCount int   `json:"excluded_messages_count"`
+	DuplicateCount        int   `json:"duplicate_count"`
 }

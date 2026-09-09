@@ -185,3 +185,32 @@ func TestOpenAICompatibleRetriesTemporaryStatus(t *testing.T) {
 		t.Fatalf("requests = %d, want one retry after a temporary error", got)
 	}
 }
+
+func TestOpenAICompatibleRetriesIncompleteCoverage(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request chatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if calls.Add(1) == 1 {
+			writeChatContent(t, w, `{"title":"Digest","overview":"Overview","topics":[{"title":"Topic","short_summary":"Short","full_summary":"Full","confidence":"high","importance":5,"source_indexes":[0]}]}`)
+			return
+		}
+		if len(request.Messages) != 3 || !strings.Contains(request.Messages[2].Content, "[1]") {
+			t.Fatalf("retry messages = %+v, want missing-index correction", request.Messages)
+		}
+		writeChatContent(t, w, `{"title":"Digest","overview":"Overview","topics":[{"title":"Topic","short_summary":"Short","full_summary":"Full","confidence":"high","importance":5,"source_indexes":[0]}],"excluded_sources":[{"source_index":1,"reason":"реклама"}]}`)
+	}))
+	defer server.Close()
+
+	result, err := NewOpenAICompatible(server.URL, "key", "model", server.Client()).Summarize(context.Background(), SummaryInput{
+		Messages: []SummaryMessageInput{{Index: 0, Text: "News"}, {Index: 1, Text: "Advertisement"}},
+	})
+	if err != nil {
+		t.Fatalf("Summarize() error = %v", err)
+	}
+	if calls.Load() != 2 || len(result.ExcludedSources) != 1 || result.ExcludedSources[0].SourceIndex != 1 {
+		t.Fatalf("calls = %d result = %+v", calls.Load(), result)
+	}
+}

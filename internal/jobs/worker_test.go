@@ -44,7 +44,7 @@ func TestWorkerStoresHandlerResult(t *testing.T) {
 	if err := json.Unmarshal(repo.completedResult, &result); err != nil {
 		t.Fatalf("decode result: %v", err)
 	}
-	if result.SummaryID != 20 || result.TopicsCount != 3 {
+	if result.SummaryID != 20 || result.TopicsCount != 3 || result.UsedMessagesCount != 10 || result.ExcludedMessagesCount != 2 {
 		t.Fatalf("result = %+v", result)
 	}
 }
@@ -168,11 +168,13 @@ func (f *fakePipelineScheduler) RunSchedule(_ context.Context, schedule domain.S
 }
 
 var summaryResultFixture = summary.GenerateResult{
-	SummaryID:      20,
-	SummaryJobID:   30,
-	TopicsCount:    3,
-	MessagesCount:  12,
-	DuplicateCount: 2,
+	SummaryID:             20,
+	SummaryJobID:          30,
+	TopicsCount:           3,
+	MessagesCount:         12,
+	UsedMessagesCount:     10,
+	ExcludedMessagesCount: 2,
+	DuplicateCount:        2,
 }
 
 type fakeSummaryGenerator struct {

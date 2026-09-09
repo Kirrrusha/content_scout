@@ -15,15 +15,27 @@ type SummaryJob struct {
 }
 
 type Summary struct {
-	ID            int64
-	JobID         int64
-	Title         string
-	Overview      string
-	MessagesCount int
-	SourcesCount  int
-	TopicsCount   int
-	Markdown      string
-	CreatedAt     time.Time
+	ID                    int64
+	JobID                 int64
+	Title                 string
+	Overview              string
+	MessagesCount         int
+	UsedMessagesCount     int
+	ExcludedMessagesCount int
+	SourcesCount          int
+	TopicsCount           int
+	Markdown              string
+	CreatedAt             time.Time
+	ExcludedMessages      []SummaryExcludedMessage
+}
+
+type SummaryExcludedMessage struct {
+	CollectedMessageID int64
+	TelegramChatID     int64
+	MessageID          int64
+	SourceTitle        string
+	SourceURL          string
+	Reason             string
 }
 
 type SummaryTopic struct {

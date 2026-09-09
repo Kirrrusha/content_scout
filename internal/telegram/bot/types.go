@@ -29,6 +29,7 @@ type Incoming struct {
 type Outgoing struct {
 	ChatID         int64
 	Text           string
+	ParseMode      string
 	Menu           Menu
 	DocumentPath   string
 	DocumentName   string

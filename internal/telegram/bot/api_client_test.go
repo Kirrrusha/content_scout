@@ -37,7 +37,7 @@ func TestGenerateFromCollectionQueuesTaskAndPollsUntilCompleted(t *testing.T) {
 				_, _ = w.Write([]byte(`{"id":11,"status":"running","artifacts":{}}`))
 				return
 			}
-			_, _ = w.Write([]byte(`{"id":11,"status":"completed","artifacts":{"summary_id":5,"summary_job_id":6,"topics_count":3,"messages_count":81,"duplicate_count":2}}`))
+			_, _ = w.Write([]byte(`{"id":11,"status":"completed","artifacts":{"summary_id":5,"summary_job_id":6,"topics_count":3,"messages_count":81,"used_messages_count":79,"excluded_messages_count":2,"duplicate_count":2}}`))
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -62,6 +62,9 @@ func TestGenerateFromCollectionQueuesTaskAndPollsUntilCompleted(t *testing.T) {
 	}
 	if result.TopicsCount != 3 || result.MessagesCount != 81 || result.DuplicateCount != 2 {
 		t.Fatalf("counts = (%d, %d, %d), want (3, 81, 2)", result.TopicsCount, result.MessagesCount, result.DuplicateCount)
+	}
+	if result.UsedMessagesCount != 79 || result.ExcludedMessagesCount != 2 {
+		t.Fatalf("coverage counts = (%d, %d), want (79, 2)", result.UsedMessagesCount, result.ExcludedMessagesCount)
 	}
 	if polls != 2 {
 		t.Fatalf("polled %d times, want 2", polls)

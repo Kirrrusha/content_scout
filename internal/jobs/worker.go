@@ -222,11 +222,13 @@ func (h SummaryGenerationHandler) HandleJobWithResult(ctx context.Context, job d
 		return nil, err
 	}
 	return json.Marshal(domain.JobResultSummaryGeneration{
-		SummaryID:      result.SummaryID,
-		SummaryJobID:   result.SummaryJobID,
-		TopicsCount:    result.TopicsCount,
-		MessagesCount:  result.MessagesCount,
-		DuplicateCount: result.DuplicateCount,
+		SummaryID:             result.SummaryID,
+		SummaryJobID:          result.SummaryJobID,
+		TopicsCount:           result.TopicsCount,
+		MessagesCount:         result.MessagesCount,
+		UsedMessagesCount:     result.UsedMessagesCount,
+		ExcludedMessagesCount: result.ExcludedMessagesCount,
+		DuplicateCount:        result.DuplicateCount,
 	})
 }
 

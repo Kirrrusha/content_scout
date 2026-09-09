@@ -8,7 +8,10 @@ import (
 	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
+	"github.com/kirilllebedenko/content_scout/internal/summary/deduplicator"
+	"github.com/kirilllebedenko/content_scout/internal/summary/filter"
 	"github.com/kirilllebedenko/content_scout/internal/summary/llm"
+	"github.com/kirilllebedenko/content_scout/internal/summary/pipeline"
 )
 
 func TestGenerateFromCollectionPersistsSummary(t *testing.T) {
@@ -86,7 +89,7 @@ func TestGenerateFromCollectionDoesNotMoveReadPositionBackwards(t *testing.T) {
 	collections := &fakeCollections{
 		job: &domain.MessageCollectionJob{ID: 10, UserID: 1, GroupID: 7, Status: domain.JobStatusCompleted},
 		messages: []domain.CollectedMessage{
-			{JobID: 10, UserID: 1, ChatID: 5, MessageID: 101, Date: time.Now(), Text: "Go team published a detailed compiler performance update https://example.com/go"},
+			{ID: 1001, JobID: 10, UserID: 1, ChatID: 5, MessageID: 101, Date: time.Now(), Text: "Go team published a detailed compiler performance update https://example.com/go"},
 		},
 	}
 	summaries := &fakeSummaries{}
@@ -147,6 +150,23 @@ func TestGenerateFromCollectionDoesNotFailSavedSummaryWhenTelegramReadMarkFails(
 	}
 	if position == nil || position.LastSummarizedMessageID != 101 {
 		t.Fatalf("position = %+v, want message 101", position)
+	}
+}
+
+func TestSummaryCoverageCountsAndPersistsExcludedReasons(t *testing.T) {
+	processed := &pipeline.Result{Clusters: []deduplicator.Cluster{
+		{Messages: []filter.Message{{Source: domain.CollectedMessage{ID: 101}}, {Source: domain.CollectedMessage{ID: 102}}}},
+		{Messages: []filter.Message{{Source: domain.CollectedMessage{ID: 103}}}},
+	}}
+	result := &llm.SummaryResult{ExcludedSources: []llm.ExcludedSourceResult{{SourceIndex: 1, Reason: "реклама"}}}
+	topics := []domain.SummaryTopic{{Messages: []domain.SummaryTopicMessage{{CollectedMessageID: 101}, {CollectedMessageID: 102}}}}
+
+	excluded := excludedMessagesFromResult(result, processed)
+	if len(excluded) != 1 || excluded[0].CollectedMessageID != 103 || excluded[0].Reason != "реклама" {
+		t.Fatalf("excluded messages = %+v", excluded)
+	}
+	if got := distinctTopicMessageCount(topics); got != 2 {
+		t.Fatalf("used messages = %d, want 2", got)
 	}
 }
 

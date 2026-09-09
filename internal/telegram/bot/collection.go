@@ -33,7 +33,11 @@ func summaryResultText(result *summary.GenerateResult) string {
 	if result == nil {
 		return "Сводка не создана."
 	}
-	return fmt.Sprintf("Сводка готова.\n\nТем: %d\nСообщений в работе: %d\nДубликатов убрано: %d", result.TopicsCount, result.MessagesCount, result.DuplicateCount)
+	used := result.UsedMessagesCount
+	if used == 0 && result.ExcludedMessagesCount == 0 && result.MessagesCount > 0 {
+		used = result.MessagesCount
+	}
+	return fmt.Sprintf("Сводка готова.\n\nТем: %d\nИспользовано сообщений: %d из %d\nИсключено: %d\nДубликатов объединено: %d", result.TopicsCount, used, result.MessagesCount, result.ExcludedMessagesCount, result.DuplicateCount)
 }
 
 func parseCollectionMode(value string) domain.CollectionMode {

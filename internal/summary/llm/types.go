@@ -27,11 +27,17 @@ type SummaryMessageInput struct {
 }
 
 type SummaryResult struct {
-	Title          string               `json:"title"`
-	Overview       string               `json:"overview"`
-	Topics         []SummaryTopicResult `json:"topics"`
-	FilteredCount  int                  `json:"filtered_count,omitempty"`
-	DuplicateCount int                  `json:"duplicate_count,omitempty"`
+	Title           string                 `json:"title"`
+	Overview        string                 `json:"overview"`
+	Topics          []SummaryTopicResult   `json:"topics"`
+	ExcludedSources []ExcludedSourceResult `json:"excluded_sources,omitempty"`
+	FilteredCount   int                    `json:"filtered_count,omitempty"`
+	DuplicateCount  int                    `json:"duplicate_count,omitempty"`
+}
+
+type ExcludedSourceResult struct {
+	SourceIndex int    `json:"source_index"`
+	Reason      string `json:"reason"`
 }
 
 type SummaryTopicResult struct {

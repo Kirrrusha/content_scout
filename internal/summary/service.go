@@ -44,11 +44,13 @@ type GenerateRequest struct {
 }
 
 type GenerateResult struct {
-	SummaryID      int64
-	SummaryJobID   int64
-	TopicsCount    int
-	MessagesCount  int
-	DuplicateCount int
+	SummaryID             int64
+	SummaryJobID          int64
+	TopicsCount           int
+	MessagesCount         int
+	UsedMessagesCount     int
+	ExcludedMessagesCount int
+	DuplicateCount        int
 }
 
 func NewService(ownerTelegramID int64, users storage.UserRepository, collections storage.MessageCollectionRepository, summaries storage.SummaryRepository, chats storage.TelegramChatRepository, positions storage.ReadPositionRepository, summarizer llm.Summarizer) *Service {
@@ -119,14 +121,24 @@ func (s *Service) GenerateFromCollection(ctx context.Context, req GenerateReques
 		return nil, err
 	}
 	topics := topicsFromResult(llmResult, processed, chatByID)
+	excludedMessages := excludedMessagesFromResult(llmResult, processed)
+	usedMessagesCount := distinctTopicMessageCount(topics)
+	if classified := usedMessagesCount + len(excludedMessages); classified != processed.Stats.KeptMessages {
+		err := fmt.Errorf("summary message coverage mismatch: classified=%d kept=%d", classified, processed.Stats.KeptMessages)
+		s.markJobFailed(ctx, summaryJob.ID, err)
+		return nil, err
+	}
 	saved, err := s.summaries.CreateSummary(ctx, domain.Summary{
-		JobID:         summaryJob.ID,
-		Title:         llmResult.Title,
-		Overview:      llmResult.Overview,
-		MessagesCount: processed.Stats.KeptMessages,
-		SourcesCount:  distinctChatCount(messages),
-		TopicsCount:   len(topics),
-		Markdown:      renderMarkdown(llmResult, processed, chatByID),
+		JobID:                 summaryJob.ID,
+		Title:                 llmResult.Title,
+		Overview:              llmResult.Overview,
+		MessagesCount:         processed.Stats.KeptMessages,
+		UsedMessagesCount:     usedMessagesCount,
+		ExcludedMessagesCount: len(excludedMessages),
+		SourcesCount:          distinctChatCount(messages),
+		TopicsCount:           len(topics),
+		Markdown:              renderMarkdown(llmResult, processed, chatByID),
+		ExcludedMessages:      excludedMessages,
 	}, topics)
 	if err != nil {
 		s.markJobFailed(ctx, summaryJob.ID, err)
@@ -141,11 +153,13 @@ func (s *Service) GenerateFromCollection(ctx context.Context, req GenerateReques
 	_ = s.markReadPositions(ctx, user.ID, messages)
 	_ = s.markTelegramMessagesRead(ctx, req.TelegramUserID, messages)
 	return &GenerateResult{
-		SummaryID:      saved.ID,
-		SummaryJobID:   summaryJob.ID,
-		TopicsCount:    len(topics),
-		MessagesCount:  processed.Stats.KeptMessages,
-		DuplicateCount: processed.Stats.DuplicateRemoved,
+		SummaryID:             saved.ID,
+		SummaryJobID:          summaryJob.ID,
+		TopicsCount:           len(topics),
+		MessagesCount:         processed.Stats.KeptMessages,
+		UsedMessagesCount:     usedMessagesCount,
+		ExcludedMessagesCount: len(excludedMessages),
+		DuplicateCount:        processed.Stats.DuplicateRemoved,
 	}, nil
 }
 
@@ -321,6 +335,44 @@ func topicMessages(sourceIndexes []int, processed *pipeline.Result, chatByID map
 		}
 	}
 	return messages
+}
+
+func excludedMessagesFromResult(result *llm.SummaryResult, processed *pipeline.Result) []domain.SummaryExcludedMessage {
+	excluded := make([]domain.SummaryExcludedMessage, 0, len(result.ExcludedSources))
+	seen := make(map[int64]struct{})
+	for _, source := range result.ExcludedSources {
+		if source.SourceIndex < 0 || source.SourceIndex >= len(processed.Clusters) {
+			continue
+		}
+		for _, message := range processed.Clusters[source.SourceIndex].Messages {
+			if message.Source.ID == 0 {
+				continue
+			}
+			if _, ok := seen[message.Source.ID]; ok {
+				continue
+			}
+			seen[message.Source.ID] = struct{}{}
+			excluded = append(excluded, domain.SummaryExcludedMessage{
+				CollectedMessageID: message.Source.ID,
+				TelegramChatID:     message.Source.TelegramChatID,
+				MessageID:          message.Source.MessageID,
+				Reason:             source.Reason,
+			})
+		}
+	}
+	return excluded
+}
+
+func distinctTopicMessageCount(topics []domain.SummaryTopic) int {
+	seen := make(map[int64]struct{})
+	for _, topic := range topics {
+		for _, message := range topic.Messages {
+			if message.CollectedMessageID != 0 {
+				seen[message.CollectedMessageID] = struct{}{}
+			}
+		}
+	}
+	return len(seen)
 }
 
 func chatTitle(chat domain.TelegramChat) string {

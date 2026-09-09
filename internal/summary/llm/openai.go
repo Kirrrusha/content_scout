@@ -112,6 +112,21 @@ func (c *OpenAICompatible) summarizeBatch(ctx context.Context, input SummaryInpu
 			continue
 		}
 		normalizeSummarySourceIndexes(result)
+		if err := ValidateSummaryCoverage(result, len(input.Messages)); err != nil {
+			lastErr = err
+			if ctx.Err() != nil {
+				break
+			}
+			var coverageErr summaryCoverageError
+			if errors.As(err, &coverageErr) && len(coverageErr.missing) > 0 {
+				payload.Messages = append(payload.Messages[:2], chatMessage{
+					Role:    "user",
+					Content: fmt.Sprintf("Предыдущий ответ не классифицировал source_indexes %v. Верни полный JSON заново: каждый индекс должен быть либо в topics[].source_indexes, либо в excluded_sources с причиной.", coverageErr.missing),
+				})
+			}
+			sleepBackoff(ctx, attempt)
+			continue
+		}
 		return result, nil
 	}
 	return nil, fmt.Errorf("summarize with llm: %w", lastErr)
@@ -296,7 +311,8 @@ const summarySystemPrompt = `Ты формируешь тематическую 
 Не смешивай несвязанные сюжеты в одной теме. Игнорируй рекламные и сервисные сообщения.
 Не выдумывай факты. Отделяй факты от мнений. Отмечай противоречия и низкую уверенность.
 Для каждой темы укажи source_indexes всех сообщений, на которых она основана.
-Верни только JSON: {"title":"string","overview":"string","topics":[{"title":"string","category":"string","short_summary":"string","full_summary":"string","why_important":"string","confidence":"high|medium|low","importance":1,"source_indexes":[0]}]}.`
+Каждый входной source_index обязан присутствовать либо хотя бы в одной теме, либо в excluded_sources. Исключай сообщение только с конкретной причиной, например реклама, вакансия, сервисное сообщение или отсутствие содержательного текста. Не оставляй индексы неклассифицированными.
+Верни только JSON: {"title":"string","overview":"string","topics":[{"title":"string","category":"string","short_summary":"string","full_summary":"string","why_important":"string","confidence":"high|medium|low","importance":1,"source_indexes":[0]}],"excluded_sources":[{"source_index":1,"reason":"string"}]}.`
 
 const articleSystemPrompt = `Ты превращаешь Telegram summary или тему summary в черновик статьи на русском языке.
 Требования: не выдумывай технические детали, сохраняй фактический смысл, убирай рекламу и лишние эмодзи, исправляй обрывочные формулировки, сохраняй код, явно оформляй предупреждения и выводы.
@@ -455,12 +471,33 @@ func remapSourceIndexes(result *SummaryResult, globalIndexes []int) {
 		}
 		result.Topics[i].SourceIndexes = uniqueSortedIndexes(mapped)
 	}
+	for i := range result.ExcludedSources {
+		local := result.ExcludedSources[i].SourceIndex
+		if local < 0 || local >= len(globalIndexes) {
+			continue
+		}
+		result.ExcludedSources[i].SourceIndex = globalIndexes[local]
+	}
 }
 
 func normalizeSummarySourceIndexes(result *SummaryResult) {
 	for i := range result.Topics {
 		result.Topics[i].SourceIndexes = uniqueSortedIndexes(result.Topics[i].SourceIndexes)
 	}
+	seenExcluded := make(map[int]struct{}, len(result.ExcludedSources))
+	normalizedExcluded := make([]ExcludedSourceResult, 0, len(result.ExcludedSources))
+	for _, excluded := range result.ExcludedSources {
+		if _, ok := seenExcluded[excluded.SourceIndex]; ok {
+			continue
+		}
+		seenExcluded[excluded.SourceIndex] = struct{}{}
+		excluded.Reason = strings.TrimSpace(excluded.Reason)
+		normalizedExcluded = append(normalizedExcluded, excluded)
+	}
+	sort.Slice(normalizedExcluded, func(i, j int) bool {
+		return normalizedExcluded[i].SourceIndex < normalizedExcluded[j].SourceIndex
+	})
+	result.ExcludedSources = normalizedExcluded
 }
 
 // mergeSummaries collects the batch topics, semantically merges duplicates using
@@ -475,6 +512,7 @@ func (c *OpenAICompatible) mergeSummaries(ctx context.Context, input SummaryInpu
 			continue
 		}
 		merged.Topics = append(merged.Topics, partial.Topics...)
+		merged.ExcludedSources = append(merged.ExcludedSources, partial.ExcludedSources...)
 		if strings.TrimSpace(partial.Overview) != "" {
 			overviews = append(overviews, strings.TrimSpace(partial.Overview))
 		}
@@ -482,6 +520,7 @@ func (c *OpenAICompatible) mergeSummaries(ctx context.Context, input SummaryInpu
 			merged.Title = partial.Title
 		}
 	}
+	normalizeSummarySourceIndexes(merged)
 	merged.Overview = strings.Join(overviews, " ")
 	merged.Topics = c.mergeDuplicateTopics(ctx, merged.Topics)
 	if headline, err := c.summarizeHeadline(ctx, input, merged.Topics); err == nil {
@@ -497,7 +536,60 @@ func (c *OpenAICompatible) mergeSummaries(ctx context.Context, input SummaryInpu
 	if err := ValidateSummaryResult(merged); err != nil {
 		return nil, err
 	}
+	if err := ValidateSummaryCoverage(merged, len(input.Messages)); err != nil {
+		return nil, err
+	}
 	return merged, nil
+}
+
+type summaryCoverageError struct {
+	missing []int
+	message string
+}
+
+func (e summaryCoverageError) Error() string { return e.message }
+
+// ValidateSummaryCoverage prevents a syntactically valid model response from
+// silently dropping input. A source may support several topics, but it cannot be
+// both used and excluded, and every input index must be classified.
+func ValidateSummaryCoverage(result *SummaryResult, inputCount int) error {
+	if result == nil {
+		return errors.New("summary result is nil")
+	}
+	if inputCount == 0 {
+		return nil
+	}
+	covered := make([]bool, inputCount)
+	for topicIndex, topic := range result.Topics {
+		for _, sourceIndex := range topic.SourceIndexes {
+			if sourceIndex < 0 || sourceIndex >= inputCount {
+				return fmt.Errorf("topic %d has out-of-range source_index %d", topicIndex, sourceIndex)
+			}
+			covered[sourceIndex] = true
+		}
+	}
+	for _, excluded := range result.ExcludedSources {
+		if excluded.SourceIndex < 0 || excluded.SourceIndex >= inputCount {
+			return fmt.Errorf("excluded source_index %d is out of range", excluded.SourceIndex)
+		}
+		if strings.TrimSpace(excluded.Reason) == "" {
+			return fmt.Errorf("excluded source_index %d has no reason", excluded.SourceIndex)
+		}
+		if covered[excluded.SourceIndex] {
+			return fmt.Errorf("source_index %d is both used and excluded", excluded.SourceIndex)
+		}
+		covered[excluded.SourceIndex] = true
+	}
+	missing := make([]int, 0)
+	for sourceIndex, classified := range covered {
+		if !classified {
+			missing = append(missing, sourceIndex)
+		}
+	}
+	if len(missing) > 0 {
+		return summaryCoverageError{missing: missing, message: fmt.Sprintf("summary omitted source_indexes %v", missing)}
+	}
+	return nil
 }
 
 type reduceTopic struct {

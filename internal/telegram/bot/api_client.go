@@ -185,11 +185,13 @@ func (c *APIClient) waitForSummaryJob(ctx context.Context, jobID, telegramUserID
 		switch job.Status {
 		case string(domain.JobStatusCompleted):
 			return &summary.GenerateResult{
-				SummaryID:      job.Artifacts.SummaryID,
-				SummaryJobID:   job.Artifacts.SummaryJobID,
-				TopicsCount:    job.Artifacts.TopicsCount,
-				MessagesCount:  job.Artifacts.MessagesCount,
-				DuplicateCount: job.Artifacts.DuplicateCount,
+				SummaryID:             job.Artifacts.SummaryID,
+				SummaryJobID:          job.Artifacts.SummaryJobID,
+				TopicsCount:           job.Artifacts.TopicsCount,
+				MessagesCount:         job.Artifacts.MessagesCount,
+				UsedMessagesCount:     job.Artifacts.UsedMessagesCount,
+				ExcludedMessagesCount: job.Artifacts.ExcludedMessagesCount,
+				DuplicateCount:        job.Artifacts.DuplicateCount,
 			}, nil
 		case string(domain.JobStatusFailed), string(domain.JobStatusDead), string(domain.JobStatusCancelled):
 			if job.LastError != nil && *job.LastError != "" {
@@ -344,11 +346,13 @@ type summaryTaskAPIResponse struct {
 }
 
 type jobArtifactsAPIResponse struct {
-	SummaryID      int64 `json:"summary_id"`
-	SummaryJobID   int64 `json:"summary_job_id"`
-	TopicsCount    int   `json:"topics_count"`
-	MessagesCount  int   `json:"messages_count"`
-	DuplicateCount int   `json:"duplicate_count"`
+	SummaryID             int64 `json:"summary_id"`
+	SummaryJobID          int64 `json:"summary_job_id"`
+	TopicsCount           int   `json:"topics_count"`
+	MessagesCount         int   `json:"messages_count"`
+	UsedMessagesCount     int   `json:"used_messages_count"`
+	ExcludedMessagesCount int   `json:"excluded_messages_count"`
+	DuplicateCount        int   `json:"duplicate_count"`
 }
 
 type jobAPIResponse struct {

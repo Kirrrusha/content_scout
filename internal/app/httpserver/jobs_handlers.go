@@ -27,12 +27,14 @@ type jobResponse struct {
 }
 
 type jobArtifactsView struct {
-	CollectionJobID int64 `json:"collection_job_id,omitempty"`
-	SummaryID       int64 `json:"summary_id,omitempty"`
-	SummaryJobID    int64 `json:"summary_job_id,omitempty"`
-	TopicsCount     int   `json:"topics_count,omitempty"`
-	MessagesCount   int   `json:"messages_count,omitempty"`
-	DuplicateCount  int   `json:"duplicate_count,omitempty"`
+	CollectionJobID       int64 `json:"collection_job_id,omitempty"`
+	SummaryID             int64 `json:"summary_id,omitempty"`
+	SummaryJobID          int64 `json:"summary_job_id,omitempty"`
+	TopicsCount           int   `json:"topics_count,omitempty"`
+	MessagesCount         int   `json:"messages_count,omitempty"`
+	UsedMessagesCount     int   `json:"used_messages_count,omitempty"`
+	ExcludedMessagesCount int   `json:"excluded_messages_count,omitempty"`
+	DuplicateCount        int   `json:"duplicate_count,omitempty"`
 }
 
 func (s *Server) jobGet(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +119,8 @@ func jobArtifacts(job domain.Job) jobArtifactsView {
 			artifacts.SummaryJobID = result.SummaryJobID
 			artifacts.TopicsCount = result.TopicsCount
 			artifacts.MessagesCount = result.MessagesCount
+			artifacts.UsedMessagesCount = result.UsedMessagesCount
+			artifacts.ExcludedMessagesCount = result.ExcludedMessagesCount
 			artifacts.DuplicateCount = result.DuplicateCount
 		}
 	}

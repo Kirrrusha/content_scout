@@ -67,10 +67,10 @@ func (r *SummaryRepository) CreateSummary(ctx context.Context, summary domain.Su
 	}
 
 	created, err := scanSummary(tx.QueryRowContext(ctx, `
-		INSERT INTO summaries (job_id, title, overview, messages_count, sources_count, topics_count, markdown)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, job_id, title, overview, messages_count, sources_count, topics_count, markdown, created_at
-	`, summary.JobID, summary.Title, summary.Overview, summary.MessagesCount, summary.SourcesCount, len(topics), summary.Markdown))
+		INSERT INTO summaries (job_id, title, overview, messages_count, used_messages_count, excluded_messages_count, sources_count, topics_count, markdown)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, job_id, title, overview, messages_count, used_messages_count, excluded_messages_count, sources_count, topics_count, markdown, created_at
+	`, summary.JobID, summary.Title, summary.Overview, summary.MessagesCount, summary.UsedMessagesCount, summary.ExcludedMessagesCount, summary.SourcesCount, len(topics), summary.Markdown))
 	if err != nil {
 		_ = tx.Rollback()
 		return nil, fmt.Errorf("insert summary: %w", err)
@@ -107,6 +107,16 @@ func (r *SummaryRepository) CreateSummary(ctx context.Context, summary domain.Su
 			}
 		}
 	}
+	for _, excluded := range summary.ExcludedMessages {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO summary_excluded_messages (summary_id, collected_message_id, reason)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (summary_id, collected_message_id) DO NOTHING
+		`, created.ID, excluded.CollectedMessageID, excluded.Reason); err != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("insert excluded summary message: %w", err)
+		}
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit create summary: %w", err)
@@ -116,7 +126,7 @@ func (r *SummaryRepository) CreateSummary(ctx context.Context, summary domain.Su
 
 func (r *SummaryRepository) FindSummary(ctx context.Context, summaryID int64) (*domain.Summary, error) {
 	summary, err := scanSummary(r.db.QueryRowContext(ctx, `
-		SELECT id, job_id, title, overview, messages_count, sources_count, topics_count, markdown, created_at
+		SELECT id, job_id, title, overview, messages_count, used_messages_count, excluded_messages_count, sources_count, topics_count, markdown, created_at
 		FROM summaries
 		WHERE id = $1
 	`, summaryID))
@@ -126,12 +136,15 @@ func (r *SummaryRepository) FindSummary(ctx context.Context, summaryID int64) (*
 	if err != nil {
 		return nil, fmt.Errorf("find summary: %w", err)
 	}
+	if err := r.attachExcludedMessages(ctx, summary); err != nil {
+		return nil, err
+	}
 	return summary, nil
 }
 
 func (r *SummaryRepository) FindSummaryByUser(ctx context.Context, userID, summaryID int64) (*domain.Summary, error) {
 	summary, err := scanSummary(r.db.QueryRowContext(ctx, `
-		SELECT s.id, s.job_id, s.title, s.overview, s.messages_count, s.sources_count, s.topics_count, s.markdown, s.created_at
+		SELECT s.id, s.job_id, s.title, s.overview, s.messages_count, s.used_messages_count, s.excluded_messages_count, s.sources_count, s.topics_count, s.markdown, s.created_at
 		FROM summaries s
 		JOIN summary_jobs j ON j.id = s.job_id
 		WHERE j.user_id = $1 AND s.id = $2
@@ -142,6 +155,9 @@ func (r *SummaryRepository) FindSummaryByUser(ctx context.Context, userID, summa
 	if err != nil {
 		return nil, fmt.Errorf("find summary by user: %w", err)
 	}
+	if err := r.attachExcludedMessages(ctx, summary); err != nil {
+		return nil, err
+	}
 	return summary, nil
 }
 
@@ -150,7 +166,7 @@ func (r *SummaryRepository) ListSummariesByUser(ctx context.Context, userID int6
 		limit = 20
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT s.id, s.job_id, s.title, s.overview, s.messages_count, s.sources_count, s.topics_count, s.markdown, s.created_at
+		SELECT s.id, s.job_id, s.title, s.overview, s.messages_count, s.used_messages_count, s.excluded_messages_count, s.sources_count, s.topics_count, s.markdown, s.created_at
 		FROM summaries s
 		JOIN summary_jobs j ON j.id = s.job_id
 		WHERE j.user_id = $1
@@ -315,6 +331,43 @@ func (r *SummaryRepository) attachTopicMessages(ctx context.Context, summaryID i
 	return nil
 }
 
+func (r *SummaryRepository) attachExcludedMessages(ctx context.Context, summary *domain.Summary) error {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			sem.collected_message_id,
+			cm.telegram_chat_id,
+			cm.message_id,
+			COALESCE(tc.title, cm.sender_name, 'Telegram') AS source_title,
+			tc.username,
+			cm.url,
+			sem.reason
+		FROM summary_excluded_messages sem
+		JOIN collected_messages cm ON cm.id = sem.collected_message_id
+		LEFT JOIN telegram_chats tc ON tc.id = cm.chat_id
+		WHERE sem.summary_id = $1
+		ORDER BY sem.id
+	`, summary.ID)
+	if err != nil {
+		return fmt.Errorf("list excluded summary messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var message domain.SummaryExcludedMessage
+		var username sql.NullString
+		var fallbackURL sql.NullString
+		if err := rows.Scan(&message.CollectedMessageID, &message.TelegramChatID, &message.MessageID, &message.SourceTitle, &username, &fallbackURL, &message.Reason); err != nil {
+			return fmt.Errorf("scan excluded summary message: %w", err)
+		}
+		message.SourceURL = telegramMessageURL(message.TelegramChatID, message.MessageID, username.String, fallbackURL.String)
+		summary.ExcludedMessages = append(summary.ExcludedMessages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate excluded summary messages: %w", err)
+	}
+	return nil
+}
+
 func telegramMessageURL(telegramChatID, messageID int64, username, fallback string) string {
 	if strings.TrimSpace(username) != "" {
 		return fmt.Sprintf("https://t.me/%s/%d", strings.TrimPrefix(strings.TrimSpace(username), "@"), messageID)
@@ -346,7 +399,7 @@ func scanSummary(row interface {
 	Scan(dest ...any) error
 }) (*domain.Summary, error) {
 	var summary domain.Summary
-	if err := row.Scan(&summary.ID, &summary.JobID, &summary.Title, &summary.Overview, &summary.MessagesCount, &summary.SourcesCount, &summary.TopicsCount, &summary.Markdown, &summary.CreatedAt); err != nil {
+	if err := row.Scan(&summary.ID, &summary.JobID, &summary.Title, &summary.Overview, &summary.MessagesCount, &summary.UsedMessagesCount, &summary.ExcludedMessagesCount, &summary.SourcesCount, &summary.TopicsCount, &summary.Markdown, &summary.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &summary, nil

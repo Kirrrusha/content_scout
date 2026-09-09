@@ -65,11 +65,17 @@ func TestSplitSummaryMessagesTruncatesOversizedMessage(t *testing.T) {
 }
 
 func TestRemapSourceIndexesTranslatesAndDropsOutOfRange(t *testing.T) {
-	result := &SummaryResult{Topics: []SummaryTopicResult{{SourceIndexes: []int{0, 2, 9, -1}}}}
+	result := &SummaryResult{
+		Topics:          []SummaryTopicResult{{SourceIndexes: []int{0, 2, 9, -1}}},
+		ExcludedSources: []ExcludedSourceResult{{SourceIndex: 1, Reason: "реклама"}},
+	}
 	remapSourceIndexes(result, []int{7, 8, 9})
 	got := result.Topics[0].SourceIndexes
 	if len(got) != 2 || got[0] != 7 || got[1] != 9 {
 		t.Fatalf("source indexes = %v, want [7 9]", got)
+	}
+	if got := result.ExcludedSources[0].SourceIndex; got != 8 {
+		t.Fatalf("excluded source index = %d, want 8", got)
 	}
 }
 
@@ -284,10 +290,12 @@ func TestMergeSummariesUsesSemanticReduceWithoutOriginalMessages(t *testing.T) {
 
 	client := NewOpenAICompatible(server.URL, "key", "moonshotai/Kimi-K2.6", server.Client())
 	partials := []*SummaryResult{
-		{Title: "B1", Overview: "O1", Topics: []SummaryTopicResult{{Title: "Kimi: версия вышла", Category: "AI", ShortSummary: "Компания выпустила модель Kimi", FullSummary: "Деталь 1", Confidence: "high", Importance: 6, SourceIndexes: []int{0, 1}}}},
+		{Title: "B1", Overview: "O1", Topics: []SummaryTopicResult{{Title: "Kimi: версия вышла", Category: "AI", ShortSummary: "Компания выпустила модель Kimi", FullSummary: "Деталь 1", Confidence: "high", Importance: 6, SourceIndexes: []int{0, 1}}}, ExcludedSources: []ExcludedSourceResult{{SourceIndex: 2, Reason: "noise"}, {SourceIndex: 3, Reason: "noise"}}},
 		{Title: "B2", Overview: "O2", Topics: []SummaryTopicResult{{Title: "Новая версия Kimi", Category: "AI", ShortSummary: "Состоялся релиз Kimi", FullSummary: "Деталь 2", Confidence: "medium", Importance: 7, SourceIndexes: []int{1, 4}}}},
 	}
-	result, err := client.mergeSummaries(context.Background(), SummaryInput{Messages: []SummaryMessageInput{{Text: "SECRET ORIGINAL MESSAGE"}}}, partials)
+	result, err := client.mergeSummaries(context.Background(), SummaryInput{Messages: []SummaryMessageInput{
+		{Text: "SECRET ORIGINAL MESSAGE"}, {}, {}, {}, {},
+	}}, partials)
 	if err != nil {
 		t.Fatalf("mergeSummaries() error = %v", err)
 	}
@@ -347,7 +355,7 @@ func TestMergeSummariesFallsBackWhenReduceFails(t *testing.T) {
 	}
 }
 
-func TestSummarizeBatchesKeepsSuccessfulBatchAfterPartialFailure(t *testing.T) {
+func TestSummarizeBatchesRejectsIncompleteResultAfterPartialFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request chatRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -375,20 +383,14 @@ func TestSummarizeBatchesKeepsSuccessfulBatchAfterPartialFailure(t *testing.T) {
 	defer server.Close()
 	client := NewOpenAICompatible(server.URL, "key", "model", server.Client())
 	client.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	result, err := client.Summarize(context.Background(), SummaryInput{Messages: []SummaryMessageInput{
+	_, err := client.Summarize(context.Background(), SummaryInput{Messages: []SummaryMessageInput{
 		{Text: strings.Repeat("f", maxBatchContentBytes/2)},
 		{Text: strings.Repeat("x", maxBatchContentBytes/2)},
 		{Text: strings.Repeat("y", maxBatchContentBytes/2)},
 		{Text: strings.Repeat("y", maxBatchContentBytes/2)},
 	}})
-	if err != nil {
-		t.Fatalf("Summarize() error = %v", err)
-	}
-	if len(result.Topics) != 1 {
-		t.Fatalf("topics = %d, want successful batch fallback", len(result.Topics))
-	}
-	if got := result.Topics[0].SourceIndexes; len(got) != 2 || got[0] != 2 || got[1] != 3 {
-		t.Fatalf("source indexes = %v, want surviving global indexes [2 3]", got)
+	if err == nil || !strings.Contains(err.Error(), "omitted source_indexes [0 1]") {
+		t.Fatalf("Summarize() error = %v, want incomplete coverage error", err)
 	}
 }
 

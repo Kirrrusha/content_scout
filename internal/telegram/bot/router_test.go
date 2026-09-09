@@ -702,6 +702,9 @@ func TestRouterSummaryOpenCallback(t *testing.T) {
 	if out.EditMessageID != 7 || out.CallbackID != "callback-1" {
 		t.Fatalf("out = %+v", out)
 	}
+	if out.ParseMode != "HTML" {
+		t.Fatalf("parse mode = %q, want HTML", out.ParseMode)
+	}
 	if !strings.Contains(out.Text, "Сводка #10") || out.Menu[0][0].Data != "sum:topic:10:1" {
 		t.Fatalf("output = %q menu=%+v", out.Text, out.Menu)
 	}
@@ -752,8 +755,98 @@ func TestRouterSummaryTopicCallback(t *testing.T) {
 	if out.EditMessageID != 7 || out.CallbackID != "callback-1" {
 		t.Fatalf("out = %+v", out)
 	}
+	if out.ParseMode != "HTML" {
+		t.Fatalf("parse mode = %q, want HTML", out.ParseMode)
+	}
 	if !strings.Contains(out.Text, "Go") || !strings.Contains(out.Text, "https://t.me/golang/101") || out.Menu[0][1].Data != "sum:topic:10:2" {
 		t.Fatalf("output = %q menu=%+v", out.Text, out.Menu)
+	}
+}
+
+func TestSummaryTextEscapesModelContent(t *testing.T) {
+	got := summaryText(domain.Summary{
+		ID:            10,
+		Title:         `Новости <сегодня> & "сейчас"`,
+		Overview:      `Модель вернула <script>alert("x")</script>`,
+		TopicsCount:   2,
+		MessagesCount: 11,
+		SourcesCount:  21,
+	})
+
+	for _, want := range []string{
+		`<b>Новости &lt;сегодня&gt; &amp; &#34;сейчас&#34;</b>`,
+		`&lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;`,
+		`2 темы`,
+		`11 сообщений`,
+		`21 источник`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summaryText() = %q, want fragment %q", got, want)
+		}
+	}
+}
+
+func TestSummaryTextShowsCoverageAndExcludedReason(t *testing.T) {
+	got := summaryText(domain.Summary{
+		ID:                    10,
+		Title:                 "Новости",
+		Overview:              "Обзор",
+		MessagesCount:         16,
+		UsedMessagesCount:     15,
+		ExcludedMessagesCount: 1,
+		ExcludedMessages: []domain.SummaryExcludedMessage{{
+			SourceTitle: "Лентач",
+			SourceURL:   "https://t.me/lentach/1",
+			Reason:      "реклама препарата",
+		}},
+	})
+
+	for _, want := range []string{
+		"использовано 15 из 16 · исключено 1",
+		"<b>Исключено из сводки</b>",
+		`<a href="https://t.me/lentach/1">Лентач ↗</a> — реклама препарата`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summaryText() = %q, want fragment %q", got, want)
+		}
+	}
+}
+
+func TestTopicCardTextFormatsLinksAndRussianLabels(t *testing.T) {
+	username := "go_news"
+	got := topicCardText(summary.TopicCard{
+		Topic: domain.SummaryTopic{
+			Title:         `Go & <AI>`,
+			ShortSummary:  "Коротко",
+			FullSummary:   "Подробно",
+			Category:      "Разработка",
+			Importance:    8,
+			Confidence:    domain.ConfidenceHigh,
+			MessagesCount: 4,
+			Sources: []domain.SummaryTopicSource{{
+				Title:    `Go & News`,
+				Username: &username,
+			}},
+			Messages: []domain.SummaryTopicMessage{{
+				SourceTitle: `Пост <1>`,
+				SourceURL:   "https://t.me/go_news/1?single=true&ref=test",
+			}},
+		},
+		Index: 1,
+		Total: 2,
+	})
+
+	for _, want := range []string{
+		`<b>Тема 1 из 2</b> · <code>Разработка</code>`,
+		`<b>Go &amp; &lt;AI&gt;</b>`,
+		`<a href="https://t.me/go_news">Go &amp; News ↗</a>`,
+		`<a href="https://t.me/go_news/1?single=true&amp;ref=test">Пост &lt;1&gt; ↗</a>`,
+		`Уверенность: высокая`,
+		`4 сообщения`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("topicCardText() = %q, want fragment %q", got, want)
+		}
 	}
 }
 

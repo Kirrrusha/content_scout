@@ -18,11 +18,13 @@ type summaryFromCollectionRequest struct {
 }
 
 type summaryResponse struct {
-	SummaryID      int64 `json:"summary_id"`
-	SummaryJobID   int64 `json:"summary_job_id"`
-	TopicsCount    int   `json:"topics_count"`
-	MessagesCount  int   `json:"messages_count"`
-	DuplicateCount int   `json:"duplicate_count"`
+	SummaryID             int64 `json:"summary_id"`
+	SummaryJobID          int64 `json:"summary_job_id"`
+	TopicsCount           int   `json:"topics_count"`
+	MessagesCount         int   `json:"messages_count"`
+	UsedMessagesCount     int   `json:"used_messages_count"`
+	ExcludedMessagesCount int   `json:"excluded_messages_count"`
+	DuplicateCount        int   `json:"duplicate_count"`
 }
 
 type summaryTaskResponse struct {
@@ -33,15 +35,27 @@ type summaryTaskResponse struct {
 }
 
 type summaryItemResponse struct {
-	ID            int64  `json:"id"`
-	JobID         int64  `json:"job_id"`
-	Title         string `json:"title"`
-	Overview      string `json:"overview"`
-	MessagesCount int    `json:"messages_count"`
-	SourcesCount  int    `json:"sources_count"`
-	TopicsCount   int    `json:"topics_count"`
-	Markdown      string `json:"markdown,omitempty"`
-	CreatedAt     string `json:"created_at"`
+	ID                    int64                            `json:"id"`
+	JobID                 int64                            `json:"job_id"`
+	Title                 string                           `json:"title"`
+	Overview              string                           `json:"overview"`
+	MessagesCount         int                              `json:"messages_count"`
+	UsedMessagesCount     int                              `json:"used_messages_count"`
+	ExcludedMessagesCount int                              `json:"excluded_messages_count"`
+	SourcesCount          int                              `json:"sources_count"`
+	TopicsCount           int                              `json:"topics_count"`
+	Markdown              string                           `json:"markdown,omitempty"`
+	CreatedAt             string                           `json:"created_at"`
+	ExcludedMessages      []summaryExcludedMessageResponse `json:"excluded_messages,omitempty"`
+}
+
+type summaryExcludedMessageResponse struct {
+	CollectedMessageID int64  `json:"collected_message_id"`
+	TelegramChatID     int64  `json:"telegram_chat_id"`
+	MessageID          int64  `json:"message_id"`
+	SourceTitle        string `json:"source_title"`
+	SourceURL          string `json:"source_url,omitempty"`
+	Reason             string `json:"reason"`
 }
 
 type summaryTopicResponse struct {
@@ -101,11 +115,13 @@ func (s *Server) summaryFromCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, summaryResponse{
-		SummaryID:      result.SummaryID,
-		SummaryJobID:   result.SummaryJobID,
-		TopicsCount:    result.TopicsCount,
-		MessagesCount:  result.MessagesCount,
-		DuplicateCount: result.DuplicateCount,
+		SummaryID:             result.SummaryID,
+		SummaryJobID:          result.SummaryJobID,
+		TopicsCount:           result.TopicsCount,
+		MessagesCount:         result.MessagesCount,
+		UsedMessagesCount:     result.UsedMessagesCount,
+		ExcludedMessagesCount: result.ExcludedMessagesCount,
+		DuplicateCount:        result.DuplicateCount,
 	})
 }
 
@@ -243,19 +259,40 @@ func summaryItemResponses(summaries []domain.Summary, includeMarkdown bool) []su
 
 func summaryItemResponseFromDomain(item domain.Summary, includeMarkdown bool) summaryItemResponse {
 	response := summaryItemResponse{
-		ID:            item.ID,
-		JobID:         item.JobID,
-		Title:         item.Title,
-		Overview:      item.Overview,
-		MessagesCount: item.MessagesCount,
-		SourcesCount:  item.SourcesCount,
-		TopicsCount:   item.TopicsCount,
-		CreatedAt:     item.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:                    item.ID,
+		JobID:                 item.JobID,
+		Title:                 item.Title,
+		Overview:              item.Overview,
+		MessagesCount:         item.MessagesCount,
+		UsedMessagesCount:     item.UsedMessagesCount,
+		ExcludedMessagesCount: item.ExcludedMessagesCount,
+		SourcesCount:          item.SourcesCount,
+		TopicsCount:           item.TopicsCount,
+		CreatedAt:             item.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 	if includeMarkdown {
 		response.Markdown = item.Markdown
+		response.ExcludedMessages = summaryExcludedMessageResponses(item.ExcludedMessages)
 	}
 	return response
+}
+
+func summaryExcludedMessageResponses(messages []domain.SummaryExcludedMessage) []summaryExcludedMessageResponse {
+	if len(messages) == 0 {
+		return nil
+	}
+	responses := make([]summaryExcludedMessageResponse, 0, len(messages))
+	for _, message := range messages {
+		responses = append(responses, summaryExcludedMessageResponse{
+			CollectedMessageID: message.CollectedMessageID,
+			TelegramChatID:     message.TelegramChatID,
+			MessageID:          message.MessageID,
+			SourceTitle:        message.SourceTitle,
+			SourceURL:          message.SourceURL,
+			Reason:             message.Reason,
+		})
+	}
+	return responses
 }
 
 func summaryTopicResponses(topics []domain.SummaryTopic) []summaryTopicResponse {

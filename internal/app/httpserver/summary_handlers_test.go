@@ -47,6 +47,26 @@ func TestSummariesListHandler(t *testing.T) {
 	}
 }
 
+func TestSummaryItemResponseIncludesCoverageDetails(t *testing.T) {
+	response := summaryItemResponseFromDomain(domain.Summary{
+		MessagesCount:         16,
+		UsedMessagesCount:     15,
+		ExcludedMessagesCount: 1,
+		ExcludedMessages: []domain.SummaryExcludedMessage{{
+			CollectedMessageID: 126,
+			SourceTitle:        "Лентач",
+			Reason:             "реклама",
+		}},
+	}, true)
+
+	if response.UsedMessagesCount != 15 || response.ExcludedMessagesCount != 1 || len(response.ExcludedMessages) != 1 {
+		t.Fatalf("response = %+v", response)
+	}
+	if response.ExcludedMessages[0].CollectedMessageID != 126 || response.ExcludedMessages[0].Reason != "реклама" {
+		t.Fatalf("excluded response = %+v", response.ExcludedMessages[0])
+	}
+}
+
 func TestSummaryTopicsHandler(t *testing.T) {
 	browser := &fakeHTTPSummaryBrowser{
 		topics: []domain.SummaryTopic{{

@@ -310,6 +310,7 @@ func (s *Service) Send(_ context.Context, out Outgoing) error {
 	if out.DocumentPath != "" {
 		doc := tgbotapi.NewDocument(out.ChatID, tgbotapi.FilePath(out.DocumentPath))
 		doc.Caption = out.Text
+		doc.ParseMode = out.ParseMode
 		doc.ReplyMarkup = telegramMenu(out.Menu)
 		if _, err := s.api.Send(doc); err != nil {
 			s.logger.Warn("telegram send document failed", "chat_id", out.ChatID, "document_path", out.DocumentPath, "error", err)
@@ -321,10 +322,12 @@ func (s *Service) Send(_ context.Context, out Outgoing) error {
 
 	if out.EditMessageID != 0 {
 		edit := tgbotapi.NewEditMessageText(out.ChatID, out.EditMessageID, out.Text)
+		edit.ParseMode = out.ParseMode
 		edit.ReplyMarkup = telegramMenu(out.Menu)
 		if _, err := s.api.Send(edit); err != nil {
 			s.logger.Warn("telegram edit failed; sending fallback message", "chat_id", out.ChatID, "message_id", out.EditMessageID, "error", err)
 			msg := tgbotapi.NewMessage(out.ChatID, out.Text)
+			msg.ParseMode = out.ParseMode
 			msg.ReplyMarkup = telegramMenu(out.Menu)
 			if _, sendErr := s.api.Send(msg); sendErr != nil {
 				s.logger.Warn("telegram fallback message failed", "chat_id", out.ChatID, "message_id", out.EditMessageID, "error", sendErr)
@@ -338,6 +341,7 @@ func (s *Service) Send(_ context.Context, out Outgoing) error {
 	}
 
 	msg := tgbotapi.NewMessage(out.ChatID, out.Text)
+	msg.ParseMode = out.ParseMode
 	msg.ReplyMarkup = telegramMenu(out.Menu)
 	if _, err := s.api.Send(msg); err != nil {
 		s.logger.Warn("telegram send message failed", "chat_id", out.ChatID, "error", err)

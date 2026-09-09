@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -35,6 +37,7 @@ func (r *Router) showSummaries(ctx context.Context, chatID, userID int64, editMe
 	return Outgoing{
 		ChatID:         chatID,
 		Text:           summariesListText(items),
+		ParseMode:      "HTML",
 		Menu:           summariesMenu(items),
 		EditMessageID:  editMessageID,
 		AnswerCallback: callbackAnswer,
@@ -122,6 +125,7 @@ func (r *Router) renderSummary(ctx context.Context, chatID, userID, summaryID in
 	return Outgoing{
 		ChatID:         chatID,
 		Text:           summaryText(*item),
+		ParseMode:      "HTML",
 		Menu:           summaryMenu(item.ID),
 		EditMessageID:  editMessageID,
 		AnswerCallback: callbackAnswer,
@@ -145,6 +149,7 @@ func (r *Router) renderTopic(ctx context.Context, chatID, userID, summaryID int6
 	return Outgoing{
 		ChatID:         chatID,
 		Text:           topicCardText(*card),
+		ParseMode:      "HTML",
 		Menu:           topicMenu(card.Summary.ID, card.Index, card.Total),
 		EditMessageID:  editMessageID,
 		AnswerCallback: callbackAnswer,
@@ -153,27 +158,41 @@ func (r *Router) renderTopic(ctx context.Context, chatID, userID, summaryID int6
 
 func summariesListText(items []domain.Summary) string {
 	var b strings.Builder
-	b.WriteString("История summary\n")
+	b.WriteString("<b>История сводок</b>\n")
 	for _, item := range items {
-		fmt.Fprintf(&b, "\n#%d %s\nТем: %d | сообщений: %d | источников: %d", item.ID, fallbackTitle(item.Title), item.TopicsCount, item.MessagesCount, item.SourcesCount)
+		fmt.Fprintf(&b, "\n<b>#%d · %s</b>\n%s · %s · %s", item.ID, escapeHTML(fallbackTitle(item.Title)), countLabel(item.TopicsCount, "тема", "темы", "тем"), summaryMessageUsage(item), countLabel(item.SourcesCount, "источник", "источника", "источников"))
 	}
 	return b.String()
 }
 
 func summaryText(item domain.Summary) string {
-	return fmt.Sprintf("Сводка #%d\n\n%s\n\n%s\n\nТем: %d\nСообщений: %d\nИсточников: %d", item.ID, fallbackTitle(item.Title), fallbackTitle(item.Overview), item.TopicsCount, item.MessagesCount, item.SourcesCount)
+	text := fmt.Sprintf("🗞 <b>%s</b>\n\n%s\n\n📌 <b>%s</b> · %s · %s",
+		escapeHTML(fallbackTitle(item.Title)),
+		escapeHTML(fallbackTitle(item.Overview)),
+		countLabel(item.TopicsCount, "тема", "темы", "тем"),
+		summaryMessageUsage(item),
+		countLabel(item.SourcesCount, "источник", "источника", "источников"),
+	)
+	if excluded := excludedMessagesText(item.ExcludedMessages); excluded != "" {
+		text += "\n\n<b>Исключено из сводки</b>\n" + excluded
+	}
+	return fmt.Sprintf("%s\n<code>Сводка #%d</code>", text, item.ID)
 }
 
 func topicCardText(card summary.TopicCard) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n%s\n\n%s", fallbackTitle(card.Topic.Title), fallbackTitle(card.Topic.ShortSummary), fallbackTitle(card.Topic.FullSummary))
+	fmt.Fprintf(&b, "<b>Тема %d из %d</b>", card.Index, card.Total)
+	if category := strings.TrimSpace(card.Topic.Category); category != "" {
+		fmt.Fprintf(&b, " · <code>%s</code>", escapeHTML(category))
+	}
+	fmt.Fprintf(&b, "\n\n📰 <b>%s</b>\n\n<i>%s</i>\n\n%s", escapeHTML(fallbackTitle(card.Topic.Title)), escapeHTML(fallbackTitle(card.Topic.ShortSummary)), escapeHTML(fallbackTitle(card.Topic.FullSummary)))
 	if sources := topicSourcesText(card.Topic.Sources); sources != "" {
-		fmt.Fprintf(&b, "\n\nКаналы:\n%s", sources)
+		fmt.Fprintf(&b, "\n\n<b>Каналы</b>\n%s", sources)
 	}
 	if messages := topicMessagesText(card.Topic.Messages); messages != "" {
-		fmt.Fprintf(&b, "\n\nСообщения:\n%s", messages)
+		fmt.Fprintf(&b, "\n\n<b>Сообщения</b>\n%s", messages)
 	}
-	fmt.Fprintf(&b, "\n\nТема %d/%d | важность: %d | confidence: %s | сообщений: %d", card.Index, card.Total, card.Topic.Importance, card.Topic.Confidence, card.Topic.MessagesCount)
+	fmt.Fprintf(&b, "\n\n⭐️ Важность: <b>%d/10</b> · Уверенность: %s · %s", card.Topic.Importance, confidenceLabel(card.Topic.Confidence), countLabel(card.Topic.MessagesCount, "сообщение", "сообщения", "сообщений"))
 	return b.String()
 }
 
@@ -190,13 +209,14 @@ func topicSourcesText(sources []domain.SummaryTopicSource) string {
 		title := fallbackTitle(source.Title)
 		username := strings.TrimPrefix(strings.TrimSpace(stringValue(source.Username)), "@")
 		if username == "" {
-			lines = append(lines, "- "+title)
+			lines = append(lines, "• "+escapeHTML(title))
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("- %s: https://t.me/%s", title, username))
+		channelURL := "https://t.me/" + url.PathEscape(username)
+		lines = append(lines, fmt.Sprintf("• <a href=\"%s\">%s ↗</a>", escapeHTML(channelURL), escapeHTML(title)))
 	}
 	if len(sources) > limit {
-		lines = append(lines, fmt.Sprintf("- ещё %d", len(sources)-limit))
+		lines = append(lines, fmt.Sprintf("• ещё %d", len(sources)-limit))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -212,14 +232,14 @@ func topicMessagesText(messages []domain.SummaryTopicMessage) string {
 			break
 		}
 		title := fallbackTitle(message.SourceTitle)
-		if strings.TrimSpace(message.SourceURL) == "" {
-			lines = append(lines, fmt.Sprintf("- %s", title))
+		if !isHTTPURL(message.SourceURL) {
+			lines = append(lines, fmt.Sprintf("• %s", escapeHTML(title)))
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("- %s: %s", title, message.SourceURL))
+		lines = append(lines, fmt.Sprintf("• <a href=\"%s\">%s ↗</a>", escapeHTML(strings.TrimSpace(message.SourceURL)), escapeHTML(title)))
 	}
 	if len(messages) > limit {
-		lines = append(lines, fmt.Sprintf("- ещё %d", len(messages)-limit))
+		lines = append(lines, fmt.Sprintf("• ещё %d", len(messages)-limit))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -229,6 +249,75 @@ func stringValue(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func escapeHTML(value string) string {
+	return html.EscapeString(value)
+}
+
+func isHTTPURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+}
+
+func countLabel(count int, one, few, many string) string {
+	form := many
+	lastTwo := count % 100
+	last := count % 10
+	if lastTwo < 11 || lastTwo > 14 {
+		switch last {
+		case 1:
+			form = one
+		case 2, 3, 4:
+			form = few
+		}
+	}
+	return fmt.Sprintf("%d %s", count, form)
+}
+
+func confidenceLabel(value domain.ConfidenceLevel) string {
+	switch value {
+	case domain.ConfidenceHigh:
+		return "высокая"
+	case domain.ConfidenceLow:
+		return "низкая"
+	default:
+		return "средняя"
+	}
+}
+
+func summaryMessageUsage(item domain.Summary) string {
+	used := item.UsedMessagesCount
+	excluded := item.ExcludedMessagesCount
+	if used == 0 && excluded == 0 && item.MessagesCount > 0 {
+		used = item.MessagesCount
+	}
+	if excluded == 0 {
+		return countLabel(used, "сообщение", "сообщения", "сообщений")
+	}
+	return fmt.Sprintf("использовано %d из %d · исключено %d", used, item.MessagesCount, excluded)
+}
+
+func excludedMessagesText(messages []domain.SummaryExcludedMessage) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	const limit = 5
+	lines := make([]string, 0, min(len(messages), limit))
+	for i, message := range messages {
+		if i >= limit {
+			break
+		}
+		title := escapeHTML(fallbackTitle(message.SourceTitle))
+		if isHTTPURL(message.SourceURL) {
+			title = fmt.Sprintf("<a href=\"%s\">%s ↗</a>", escapeHTML(strings.TrimSpace(message.SourceURL)), title)
+		}
+		lines = append(lines, fmt.Sprintf("• %s — %s", title, escapeHTML(fallbackTitle(message.Reason))))
+	}
+	if len(messages) > limit {
+		lines = append(lines, fmt.Sprintf("• ещё %d", len(messages)-limit))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func summariesMenu(items []domain.Summary) Menu {
