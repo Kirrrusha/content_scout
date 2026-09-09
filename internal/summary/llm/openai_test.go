@@ -41,6 +41,12 @@ func TestOpenAICompatibleSummarize(t *testing.T) {
 		if !strings.Contains(request.Messages[0].Content, "не ограничивайся заранее заданной темой") {
 			t.Fatalf("system prompt still looks single-topic oriented: %q", request.Messages[0].Content)
 		}
+		if !strings.Contains(request.Messages[0].Content, "Не используй шаблонные формулировки вроде «Сводка новостей»") {
+			t.Fatalf("system prompt does not require a specific news headline: %q", request.Messages[0].Content)
+		}
+		if !strings.Contains(request.Messages[0].Content, "Overview — короткое описание под заголовком в 1–2 предложениях") {
+			t.Fatalf("system prompt does not require a short overview: %q", request.Messages[0].Content)
+		}
 		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
 			Message chatMessage `json:"message"`
 		}{{Message: chatMessage{Role: "assistant", Content: `{"title":"Digest","overview":"Overview","topics":[{"title":"Topic","category":"Go","short_summary":"Short","full_summary":"Full","why_important":"Important","confidence":"medium","importance":7,"source_indexes":[0]}]}`}}}})
@@ -67,6 +73,18 @@ func TestOpenAICompatibleKeepsTemperatureForGenericModel(t *testing.T) {
 	}
 	if args := instantModeTemplateArgs("generic-model"); args != nil {
 		t.Fatalf("chat template args = %#v, want nil", args)
+	}
+}
+
+func TestHeadlinePromptRequiresEditorialTitleAndShortDescription(t *testing.T) {
+	for _, want := range []string{
+		"Не используй шаблонные формулировки вроде «Сводка новостей»",
+		"Описание должно состоять из 1–2 коротких предложений",
+		"не начинай со слов «В подборке»",
+	} {
+		if !strings.Contains(headlineSystemPrompt, want) {
+			t.Fatalf("headline prompt = %q, want fragment %q", headlineSystemPrompt, want)
+		}
 	}
 }
 
