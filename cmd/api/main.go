@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -111,7 +112,7 @@ func main() {
 		summaryRepo,
 		postgres.NewTelegramChatRepository(db),
 		postgres.NewReadPositionRepository(db),
-		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: cfg.LLMTimeout}),
+		newSummarizer(cfg, logger),
 	)
 	summaryService.SetTelegramReadMarker(tdlib.NewReadService(cfg.TelegramOwnerID, userRepo, sessionRepo, factory))
 	summaryBrowser := summary.NewBrowser(cfg.TelegramOwnerID, userRepo, summaryRepo)
@@ -122,7 +123,7 @@ func main() {
 		postgres.NewMessageCollectionRepository(db),
 		postgres.NewTelegramChatRepository(db),
 		postgres.NewArticleRepository(db),
-		llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: cfg.LLMTimeout}),
+		newSummarizer(cfg, logger),
 	)
 	exportService := obsidian.NewService(
 		cfg.TelegramOwnerID,
@@ -190,4 +191,12 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+// newSummarizer builds the LLM client with the service logger attached, so a
+// failed summary batch is visible in the service log.
+func newSummarizer(cfg config.Config, logger *slog.Logger) *llm.OpenAICompatible {
+	client := llm.NewOpenAICompatible(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, &http.Client{Timeout: cfg.LLMTimeout})
+	client.SetLogger(logger)
+	return client
 }

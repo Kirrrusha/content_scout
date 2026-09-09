@@ -3,6 +3,8 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -124,11 +126,13 @@ func TestSummarizeBatchesLargeInputAndMergesTopics(t *testing.T) {
 	defer server.Close()
 
 	client := NewOpenAICompatible(server.URL, "key", "model", server.Client())
-	// 6 messages of 10000 bytes against a 20000 byte budget: 3 batches.
+	client.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// Two messages fill one batch exactly, so six messages make three batches
+	// whatever the configured budget is.
 	result, err := client.Summarize(context.Background(), SummaryInput{
 		Language: "ru",
 		Format:   "standard",
-		Messages: messagesOfSize(6, 10000),
+		Messages: messagesOfSize(6, maxBatchContentBytes/2),
 	})
 	if err != nil {
 		t.Fatalf("Summarize() error = %v", err)
@@ -170,6 +174,7 @@ func TestSummarizeSendsOneRequestForSmallInput(t *testing.T) {
 	defer server.Close()
 
 	client := NewOpenAICompatible(server.URL, "key", "model", server.Client())
+	client.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if _, err := client.Summarize(context.Background(), SummaryInput{
 		Language: "ru",
 		Messages: messagesOfSize(2, 100),

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ type OpenAICompatible struct {
 	model   string
 	client  *http.Client
 	retries int
+	logger  *slog.Logger
 }
 
 func NewOpenAICompatible(baseURL, apiKey, model string, client *http.Client) *OpenAICompatible {
@@ -34,6 +36,16 @@ func NewOpenAICompatible(baseURL, apiKey, model string, client *http.Client) *Op
 		model:   model,
 		client:  client,
 		retries: 2,
+		logger:  slog.Default(),
+	}
+}
+
+// SetLogger replaces the logger used to report per-batch problems. A batch that
+// fails is survivable, so it never surfaces as an error, and without a log line
+// a thin digest looks the same as a complete one.
+func (c *OpenAICompatible) SetLogger(logger *slog.Logger) {
+	if logger != nil {
+		c.logger = logger
 	}
 }
 
@@ -218,9 +230,9 @@ const articleSystemPrompt = `Ты превращаешь Telegram summary или
 
 const (
 	// maxBatchContentBytes bounds the message payload of one summarize request.
-	// Sized so a batch stays well inside the per-request timeout even when the
-	// model is a slow one.
-	maxBatchContentBytes = 20000
+	// A 20 KB batch still outran a 3 minute timeout on a reasoning model, burning
+	// every retry, so keep batches small enough that one attempt comfortably fits.
+	maxBatchContentBytes = 6000
 	// maxBatchConcurrency keeps a large collection from fanning out into an
 	// unbounded burst of requests against the provider.
 	maxBatchConcurrency = 3
@@ -280,6 +292,8 @@ func (c *OpenAICompatible) summarizeBatches(ctx context.Context, input SummaryIn
 			result, err := c.summarizeBatch(ctx, batchInput)
 			if err != nil {
 				errs[i] = err
+				c.logger.Warn("summary batch failed",
+					"batch", i+1, "batches", len(batches), "messages", len(batch.messages), "error", err)
 				return
 			}
 			remapSourceIndexes(result, batch.globalIndexes)
@@ -308,6 +322,7 @@ func (c *OpenAICompatible) summarizeBatches(ctx context.Context, input SummaryIn
 		}
 		return nil, firstErr
 	}
+	c.logger.Info("summary batches finished", "batches", len(batches), "succeeded", succeeded)
 	return results, nil
 }
 
