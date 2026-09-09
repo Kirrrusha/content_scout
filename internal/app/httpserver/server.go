@@ -23,20 +23,20 @@ import (
 )
 
 type Server struct {
-	httpServer *http.Server
-	db         *sql.DB
-	logger     *slog.Logger
-	options    Options
-	auth       AuthController
-	sync       SyncController
-	groups     GroupController
-	collector  CollectionController
-	summary    SummaryController
-	browser    SummaryBrowser
-	articles   ArticleController
-	exports    ExportController
-	schedules  ScheduleController
-	jobs       JobController
+	httpServer   *http.Server
+	db           *sql.DB
+	logger       *slog.Logger
+	options      Options
+	auth         AuthController
+	sync         SyncController
+	groups       GroupController
+	collector    CollectionController
+	summary      SummaryController
+	browser      SummaryBrowser
+	articles     ArticleController
+	exports      ExportController
+	schedules    ScheduleController
+	jobs         JobController
 	telegramRead TelegramReadController
 }
 
