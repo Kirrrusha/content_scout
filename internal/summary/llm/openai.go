@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,6 +37,11 @@ func NewOpenAICompatible(baseURL, apiKey, model string, client *http.Client) *Op
 	}
 }
 
+// Summarize splits the collection into batches before calling the model. A whole
+// collection routinely carries tens of kilobytes of message text, most of it in
+// Telegram captions, and asking for one summary over all of it takes longer than
+// any reasonable request timeout. Batches are summarized concurrently and their
+// topics merged, so each individual request stays small and predictable.
 func (c *OpenAICompatible) Summarize(ctx context.Context, input SummaryInput) (*SummaryResult, error) {
 	if c.apiKey == "" {
 		return nil, errors.New("LLM_API_KEY is not configured")
@@ -43,6 +49,18 @@ func (c *OpenAICompatible) Summarize(ctx context.Context, input SummaryInput) (*
 	if c.model == "" {
 		return nil, errors.New("LLM_MODEL is not configured")
 	}
+	batches := splitSummaryMessages(input.Messages, maxBatchContentBytes)
+	if len(batches) <= 1 {
+		return c.summarizeBatch(ctx, input)
+	}
+	partials, err := c.summarizeBatches(ctx, input, batches)
+	if err != nil {
+		return nil, err
+	}
+	return c.mergeSummaries(ctx, input, partials)
+}
+
+func (c *OpenAICompatible) summarizeBatch(ctx context.Context, input SummaryInput) (*SummaryResult, error) {
 	payload := chatRequest{
 		Model: c.model,
 		Messages: []chatMessage{
@@ -197,3 +215,188 @@ const articleSystemPrompt = `Ты превращаешь Telegram summary или
 - telegram_post: готовый пост с фактами и источниками.
 Верни только JSON: {"title":"string","type":"educational|guide|analysis|outline|telegram_post","tags":["tag"],"content_markdown":"# ..."}.
 В Markdown добавь раздел "Источники" и используй только переданные source URL.`
+
+const (
+	// maxBatchContentBytes bounds the message payload of one summarize request.
+	// Sized so a batch stays well inside the per-request timeout even when the
+	// model is a slow one.
+	maxBatchContentBytes = 20000
+	// maxBatchConcurrency keeps a large collection from fanning out into an
+	// unbounded burst of requests against the provider.
+	maxBatchConcurrency = 3
+)
+
+// summaryBatch is a slice of the collection together with the mapping back to
+// the caller's indexes. Messages are renumbered from zero inside a batch, since
+// a model asked to reference source_indexes tends to number what it was given
+// rather than echo the indexes it was handed.
+type summaryBatch struct {
+	messages      []SummaryMessageInput
+	globalIndexes []int
+}
+
+func splitSummaryMessages(messages []SummaryMessageInput, maxBytes int) []summaryBatch {
+	if len(messages) == 0 {
+		return nil
+	}
+	if maxBytes <= 0 {
+		maxBytes = maxBatchContentBytes
+	}
+	var batches []summaryBatch
+	current := summaryBatch{}
+	size := 0
+	for i, message := range messages {
+		messageSize := len(message.Text) + len(message.ChatTitle)
+		// Keep at least one message per batch, however long it is on its own.
+		if len(current.messages) > 0 && size+messageSize > maxBytes {
+			batches = append(batches, current)
+			current = summaryBatch{}
+			size = 0
+		}
+		local := message
+		local.Index = len(current.messages)
+		current.messages = append(current.messages, local)
+		current.globalIndexes = append(current.globalIndexes, i)
+		size += messageSize
+	}
+	if len(current.messages) > 0 {
+		batches = append(batches, current)
+	}
+	return batches
+}
+
+func (c *OpenAICompatible) summarizeBatches(ctx context.Context, input SummaryInput, batches []summaryBatch) ([]*SummaryResult, error) {
+	results := make([]*SummaryResult, len(batches))
+	errs := make([]error, len(batches))
+	semaphore := make(chan struct{}, maxBatchConcurrency)
+	var wg sync.WaitGroup
+	for i, batch := range batches {
+		wg.Add(1)
+		go func(i int, batch summaryBatch) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			batchInput := SummaryInput{Language: input.Language, Format: input.Format, Messages: batch.messages}
+			result, err := c.summarizeBatch(ctx, batchInput)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			remapSourceIndexes(result, batch.globalIndexes)
+			results[i] = result
+		}(i, batch)
+	}
+	wg.Wait()
+	// One failed batch still leaves a usable digest, so only give up when every
+	// batch failed.
+	var firstErr error
+	succeeded := 0
+	for i, err := range errs {
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if results[i] != nil {
+			succeeded++
+		}
+	}
+	if succeeded == 0 {
+		if firstErr == nil {
+			firstErr = errors.New("no batch produced a summary")
+		}
+		return nil, firstErr
+	}
+	return results, nil
+}
+
+func remapSourceIndexes(result *SummaryResult, globalIndexes []int) {
+	for i := range result.Topics {
+		mapped := make([]int, 0, len(result.Topics[i].SourceIndexes))
+		for _, local := range result.Topics[i].SourceIndexes {
+			if local < 0 || local >= len(globalIndexes) {
+				continue
+			}
+			mapped = append(mapped, globalIndexes[local])
+		}
+		result.Topics[i].SourceIndexes = mapped
+	}
+}
+
+// mergeSummaries collects the batch topics and asks the model for one title and
+// overview over them. The reduce request only carries topic headlines, so it is
+// small; if it fails the digest is still returned with a locally built overview.
+func (c *OpenAICompatible) mergeSummaries(ctx context.Context, input SummaryInput, partials []*SummaryResult) (*SummaryResult, error) {
+	merged := &SummaryResult{}
+	overviews := make([]string, 0, len(partials))
+	for _, partial := range partials {
+		if partial == nil {
+			continue
+		}
+		merged.Topics = append(merged.Topics, partial.Topics...)
+		if strings.TrimSpace(partial.Overview) != "" {
+			overviews = append(overviews, strings.TrimSpace(partial.Overview))
+		}
+		if merged.Title == "" {
+			merged.Title = partial.Title
+		}
+	}
+	merged.Overview = strings.Join(overviews, " ")
+	if headline, err := c.summarizeHeadline(ctx, input, merged.Topics); err == nil {
+		if strings.TrimSpace(headline.Title) != "" {
+			merged.Title = headline.Title
+		}
+		if strings.TrimSpace(headline.Overview) != "" {
+			merged.Overview = headline.Overview
+		}
+	}
+	if err := ValidateSummaryResult(merged); err != nil {
+		return nil, err
+	}
+	return merged, nil
+}
+
+type summaryHeadline struct {
+	Title    string `json:"title"`
+	Overview string `json:"overview"`
+}
+
+func (c *OpenAICompatible) summarizeHeadline(ctx context.Context, input SummaryInput, topics []SummaryTopicResult) (*summaryHeadline, error) {
+	type headlineTopic struct {
+		Title        string `json:"title"`
+		Category     string `json:"category"`
+		ShortSummary string `json:"short_summary"`
+	}
+	headlineTopics := make([]headlineTopic, 0, len(topics))
+	for _, topic := range topics {
+		headlineTopics = append(headlineTopics, headlineTopic{
+			Title:        topic.Title,
+			Category:     topic.Category,
+			ShortSummary: topic.ShortSummary,
+		})
+	}
+	payload := chatRequest{
+		Model: c.model,
+		Messages: []chatMessage{
+			{Role: "system", Content: headlineSystemPrompt},
+			{Role: "user", Content: mustJSON(map[string]any{"language": input.Language, "topics": headlineTopics})},
+		},
+		Temperature:    0.2,
+		ResponseFormat: map[string]string{"type": "json_object"},
+	}
+	raw, err := c.doChat(ctx, payload)
+	if err != nil {
+		return nil, err
+	}
+	var headline summaryHeadline
+	if err := json.Unmarshal(raw, &headline); err != nil {
+		return nil, fmt.Errorf("parse summary headline json: %w", err)
+	}
+	return &headline, nil
+}
+
+const headlineSystemPrompt = `Тебе дан список тем уже готовой сводки Telegram.
+Составь общий заголовок и краткий обзор на русском языке, опираясь только на переданные темы.
+Не выдумывай факты и не добавляй темы, которых нет в списке.
+Верни только JSON: {"title":"string","overview":"string"}.`
