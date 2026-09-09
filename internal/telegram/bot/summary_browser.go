@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -168,7 +169,7 @@ func summariesListText(items []domain.Summary) string {
 func summaryText(item domain.Summary) string {
 	text := fmt.Sprintf("🗞 <b>%s</b>\n\n%s\n\n📌 <b>%s</b> · %s · %s",
 		escapeHTML(fallbackTitle(item.Title)),
-		escapeHTML(fallbackTitle(item.Overview)),
+		telegramHTMLText(fallbackTitle(item.Overview)),
 		countLabel(item.TopicsCount, "тема", "темы", "тем"),
 		summaryMessageUsage(item),
 		countLabel(item.SourcesCount, "источник", "источника", "источников"),
@@ -185,7 +186,7 @@ func topicCardText(card summary.TopicCard) string {
 	if category := strings.TrimSpace(card.Topic.Category); category != "" {
 		fmt.Fprintf(&b, " · <code>%s</code>", escapeHTML(category))
 	}
-	fmt.Fprintf(&b, "\n\n📰 <b>%s</b>\n\n<i>%s</i>\n\n%s", escapeHTML(fallbackTitle(card.Topic.Title)), escapeHTML(fallbackTitle(card.Topic.ShortSummary)), escapeHTML(fallbackTitle(card.Topic.FullSummary)))
+	fmt.Fprintf(&b, "\n\n📰 <b>%s</b>\n\n<i>%s</i>\n\n%s", escapeHTML(fallbackTitle(card.Topic.Title)), telegramHTMLText(fallbackTitle(card.Topic.ShortSummary)), telegramHTMLText(fallbackTitle(card.Topic.FullSummary)))
 	if sources := topicSourcesText(card.Topic.Sources); sources != "" {
 		fmt.Fprintf(&b, "\n\n<b>Каналы</b>\n%s", sources)
 	}
@@ -253,6 +254,56 @@ func stringValue(value *string) string {
 
 func escapeHTML(value string) string {
 	return html.EscapeString(value)
+}
+
+var (
+	telegramMarkdownLink   = regexp.MustCompile("\\[([^\\]\\n]+)\\]\\((https?://[^\\s)]+)\\)")
+	telegramMarkdownBold   = regexp.MustCompile("\\*\\*([^*\\n]+)\\*\\*")
+	telegramMarkdownStrike = regexp.MustCompile("~~([^~\\n]+)~~")
+	telegramMarkdownItalic = regexp.MustCompile("\\*([^*\\n]+)\\*")
+)
+
+// telegramHTMLText converts the small Markdown subset found in both legacy and
+// current LLM fields at read time. Keeping this in the Telegram renderer makes
+// improved formatting apply to summaries that are already stored in the DB.
+func telegramHTMLText(value string) string {
+	lines := strings.Split(strings.TrimSpace(value), "\n")
+	formatted := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			formatted = append(formatted, "")
+			continue
+		}
+
+		isHeading := false
+		for _, prefix := range []string{"### ", "## ", "# "} {
+			if strings.HasPrefix(trimmed, prefix) {
+				trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
+				isHeading = true
+				break
+			}
+		}
+		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
+			trimmed = "• " + strings.TrimSpace(trimmed[2:])
+		}
+
+		lineHTML := telegramInlineHTML(trimmed)
+		if isHeading {
+			lineHTML = "<b>" + lineHTML + "</b>"
+		}
+		formatted = append(formatted, lineHTML)
+	}
+	return strings.Join(formatted, "\n")
+}
+
+func telegramInlineHTML(value string) string {
+	result := escapeHTML(value)
+	result = telegramMarkdownLink.ReplaceAllString(result, "<a href=\"$2\">$1</a>")
+	result = telegramMarkdownBold.ReplaceAllString(result, "<b>$1</b>")
+	result = telegramMarkdownStrike.ReplaceAllString(result, "<s>$1</s>")
+	result = telegramMarkdownItalic.ReplaceAllString(result, "<i>$1</i>")
+	return result
 }
 
 func isHTTPURL(value string) bool {

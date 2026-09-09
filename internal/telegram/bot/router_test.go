@@ -812,6 +812,25 @@ func TestSummaryTextShowsCoverageAndExcludedReason(t *testing.T) {
 	}
 }
 
+func TestSummaryTextFormatsLegacyMarkdownAtReadTime(t *testing.T) {
+	got := summaryText(domain.Summary{
+		ID:          10,
+		Title:       "Старая сводка",
+		Overview:    "## Главное\n\n**Apple** представила обновление.\n- [Источник](https://t.me/apple/1)",
+		TopicsCount: 1,
+	})
+
+	for _, want := range []string{
+		"<b>Главное</b>",
+		"<b>Apple</b> представила обновление.",
+		"• <a href=\"https://t.me/apple/1\">Источник</a>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summaryText() = %q, want fragment %q", got, want)
+		}
+	}
+}
+
 func TestTopicCardTextFormatsLinksAndRussianLabels(t *testing.T) {
 	username := "go_news"
 	got := topicCardText(summary.TopicCard{
