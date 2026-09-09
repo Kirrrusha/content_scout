@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -109,6 +110,7 @@ func (c *OpenAICompatible) summarizeBatch(ctx context.Context, input SummaryInpu
 			sleepBackoff(ctx, attempt)
 			continue
 		}
+		normalizeSummarySourceIndexes(result)
 		return result, nil
 	}
 	return nil, fmt.Errorf("summarize with llm: %w", lastErr)
@@ -254,6 +256,7 @@ const (
 	maxSummaryCompletionTokens  = 3500
 	maxArticleCompletionTokens  = 6000
 	maxHeadlineCompletionTokens = 800
+	maxReduceCompletionTokens   = 2000
 )
 
 // Kimi K2.5/K2.6 enable reasoning by default. Summary generation is a bounded
@@ -313,6 +316,12 @@ const (
 	// maxBatchConcurrency keeps a large collection from fanning out into an
 	// unbounded burst of requests against the provider.
 	maxBatchConcurrency = 3
+	// maxReduceContentBytes bounds each cross-batch topic clustering request.
+	// Unlike batch summarization, reduce only sends compact topic descriptors and
+	// never repeats the original Telegram messages.
+	maxReduceContentBytes = 48000
+	maxReduceTitleBytes   = 240
+	maxReduceSummaryBytes = 700
 )
 
 // summaryBatch is a slice of the collection together with the mapping back to
@@ -443,13 +452,20 @@ func remapSourceIndexes(result *SummaryResult, globalIndexes []int) {
 			}
 			mapped = append(mapped, globalIndexes[local])
 		}
-		result.Topics[i].SourceIndexes = mapped
+		result.Topics[i].SourceIndexes = uniqueSortedIndexes(mapped)
 	}
 }
 
-// mergeSummaries collects the batch topics and asks the model for one title and
-// overview over them. The reduce request only carries topic headlines, so it is
-// small; if it fails the digest is still returned with a locally built overview.
+func normalizeSummarySourceIndexes(result *SummaryResult) {
+	for i := range result.Topics {
+		result.Topics[i].SourceIndexes = uniqueSortedIndexes(result.Topics[i].SourceIndexes)
+	}
+}
+
+// mergeSummaries collects the batch topics, semantically merges duplicates using
+// compact topic descriptors, then asks for one title and overview. Original
+// message text is never repeated during reduce. Every reduce call is optional:
+// partial or total failure still returns the unmerged, usable batch summaries.
 func (c *OpenAICompatible) mergeSummaries(ctx context.Context, input SummaryInput, partials []*SummaryResult) (*SummaryResult, error) {
 	merged := &SummaryResult{}
 	overviews := make([]string, 0, len(partials))
@@ -466,6 +482,7 @@ func (c *OpenAICompatible) mergeSummaries(ctx context.Context, input SummaryInpu
 		}
 	}
 	merged.Overview = strings.Join(overviews, " ")
+	merged.Topics = c.mergeDuplicateTopics(ctx, merged.Topics)
 	if headline, err := c.summarizeHeadline(ctx, input, merged.Topics); err == nil {
 		if strings.TrimSpace(headline.Title) != "" {
 			merged.Title = headline.Title
@@ -473,11 +490,255 @@ func (c *OpenAICompatible) mergeSummaries(ctx context.Context, input SummaryInpu
 		if strings.TrimSpace(headline.Overview) != "" {
 			merged.Overview = headline.Overview
 		}
+	} else {
+		c.logger.Warn("summary headline reduce failed; using batch fallback", "error", err)
 	}
 	if err := ValidateSummaryResult(merged); err != nil {
 		return nil, err
 	}
 	return merged, nil
+}
+
+type reduceTopic struct {
+	Index        int    `json:"index"`
+	Title        string `json:"title"`
+	Category     string `json:"category,omitempty"`
+	ShortSummary string `json:"short_summary"`
+}
+
+type topicMerge struct {
+	TopicIndexes []int  `json:"topic_indexes"`
+	Title        string `json:"title"`
+	ShortSummary string `json:"short_summary"`
+}
+
+type topicMergeResult struct {
+	Merges []topicMerge `json:"merges"`
+}
+
+// mergeDuplicateTopics runs a global reduce for ordinary digests. For unusually
+// large topic sets it uses bounded chunks and a second title-sorted pass, which
+// gives duplicates separated by batch boundaries another chance to meet without
+// allowing a request to grow without bound.
+func (c *OpenAICompatible) mergeDuplicateTopics(ctx context.Context, topics []SummaryTopicResult) []SummaryTopicResult {
+	if len(topics) < 2 {
+		return topics
+	}
+	current := topics
+	for pass := 0; pass < 2; pass++ {
+		order := make([]int, len(current))
+		for i := range order {
+			order[i] = i
+		}
+		if pass == 1 {
+			sort.SliceStable(order, func(i, j int) bool {
+				left := strings.ToLower(current[order[i]].Category + " " + current[order[i]].Title)
+				right := strings.ToLower(current[order[j]].Category + " " + current[order[j]].Title)
+				return left < right
+			})
+		}
+		chunks := splitReduceTopics(current, order, maxReduceContentBytes)
+		var passMerges []topicMerge
+		for _, chunk := range chunks {
+			result, err := c.reduceTopicChunk(ctx, current, chunk)
+			if err != nil {
+				c.logger.Warn("summary topic reduce chunk failed; keeping original topics", "topics", len(chunk), "error", err)
+				continue
+			}
+			passMerges = append(passMerges, result.Merges...)
+		}
+		current = applyTopicMerges(current, passMerges)
+		if len(chunks) == 1 {
+			break
+		}
+	}
+	return current
+}
+
+func splitReduceTopics(topics []SummaryTopicResult, order []int, maxBytes int) [][]int {
+	var chunks [][]int
+	var chunk []int
+	size := 0
+	for _, index := range order {
+		descriptor := compactReduceTopic(index, topics[index])
+		descriptorSize := len(mustJSON(descriptor)) + 1
+		if len(chunk) > 0 && size+descriptorSize > maxBytes {
+			chunks = append(chunks, chunk)
+			chunk = nil
+			size = 0
+		}
+		chunk = append(chunk, index)
+		size += descriptorSize
+	}
+	if len(chunk) > 0 {
+		chunks = append(chunks, chunk)
+	}
+	return chunks
+}
+
+func compactReduceTopic(index int, topic SummaryTopicResult) reduceTopic {
+	return reduceTopic{
+		Index:        index,
+		Title:        truncateUTF8(topic.Title, maxReduceTitleBytes),
+		Category:     truncateUTF8(topic.Category, maxReduceTitleBytes),
+		ShortSummary: truncateUTF8(topic.ShortSummary, maxReduceSummaryBytes),
+	}
+}
+
+func (c *OpenAICompatible) reduceTopicChunk(ctx context.Context, topics []SummaryTopicResult, indexes []int) (*topicMergeResult, error) {
+	descriptors := make([]reduceTopic, 0, len(indexes))
+	for _, index := range indexes {
+		descriptors = append(descriptors, compactReduceTopic(index, topics[index]))
+	}
+	ctx, cancel := c.withRequestBudget(ctx)
+	defer cancel()
+	payload := chatRequest{
+		Model: c.model,
+		Messages: []chatMessage{
+			{Role: "system", Content: topicReduceSystemPrompt},
+			{Role: "user", Content: mustJSON(map[string]any{"topics": descriptors})},
+		},
+		Temperature:         completionTemperature(c.model, 0.1),
+		MaxCompletionTokens: maxReduceCompletionTokens,
+		ResponseFormat:      map[string]string{"type": "json_object"},
+		ChatTemplateKwargs:  instantModeTemplateArgs(c.model),
+	}
+	raw, err := c.doChat(ctx, payload)
+	if err != nil {
+		return nil, err
+	}
+	var result topicMergeResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("parse topic reduce json: %w", err)
+	}
+	allowed := make(map[int]struct{}, len(indexes))
+	for _, index := range indexes {
+		allowed[index] = struct{}{}
+	}
+	valid := result.Merges[:0]
+	for _, merge := range result.Merges {
+		insideChunk := true
+		for _, index := range merge.TopicIndexes {
+			if _, ok := allowed[index]; !ok {
+				insideChunk = false
+				break
+			}
+		}
+		if insideChunk {
+			valid = append(valid, merge)
+		}
+	}
+	result.Merges = valid
+	return &result, nil
+}
+
+func applyTopicMerges(topics []SummaryTopicResult, merges []topicMerge) []SummaryTopicResult {
+	groups := make(map[int]topicMerge)
+	members := make(map[int]int)
+	for _, merge := range merges {
+		valid := uniqueSortedIndexes(merge.TopicIndexes)
+		if len(valid) < 2 {
+			continue
+		}
+		validGroup := true
+		for _, index := range valid {
+			if index < 0 || index >= len(topics) {
+				validGroup = false
+				break
+			}
+			if _, exists := members[index]; exists {
+				validGroup = false
+				break
+			}
+		}
+		if !validGroup {
+			continue
+		}
+		root := valid[0]
+		merge.TopicIndexes = valid
+		groups[root] = merge
+		for _, index := range valid {
+			members[index] = root
+		}
+	}
+	if len(groups) == 0 {
+		return topics
+	}
+	result := make([]SummaryTopicResult, 0, len(topics)-len(members)+len(groups))
+	for index, topic := range topics {
+		root, merged := members[index]
+		if !merged {
+			topic.SourceIndexes = uniqueSortedIndexes(topic.SourceIndexes)
+			result = append(result, topic)
+			continue
+		}
+		if root != index {
+			continue
+		}
+		result = append(result, combineTopicGroup(topics, groups[root]))
+	}
+	return result
+}
+
+func combineTopicGroup(topics []SummaryTopicResult, merge topicMerge) SummaryTopicResult {
+	representative := topics[merge.TopicIndexes[0]]
+	var sources []int
+	var fullSummaries, reasons []string
+	for _, index := range merge.TopicIndexes {
+		topic := topics[index]
+		sources = append(sources, topic.SourceIndexes...)
+		fullSummaries = appendUniqueText(fullSummaries, topic.FullSummary)
+		reasons = appendUniqueText(reasons, topic.WhyImportant)
+		if topic.Importance > representative.Importance {
+			representative.Importance = topic.Importance
+		}
+		representative.Confidence = lowerConfidence(representative.Confidence, topic.Confidence)
+	}
+	if strings.TrimSpace(merge.Title) != "" {
+		representative.Title = strings.TrimSpace(merge.Title)
+	}
+	if strings.TrimSpace(merge.ShortSummary) != "" {
+		representative.ShortSummary = strings.TrimSpace(merge.ShortSummary)
+	}
+	representative.FullSummary = strings.Join(fullSummaries, "\n\n")
+	representative.WhyImportant = strings.Join(reasons, "\n\n")
+	representative.SourceIndexes = uniqueSortedIndexes(sources)
+	return representative
+}
+
+func appendUniqueText(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if strings.EqualFold(existing, value) {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func uniqueSortedIndexes(indexes []int) []int {
+	seen := make(map[int]struct{}, len(indexes))
+	unique := make([]int, 0, len(indexes))
+	for _, index := range indexes {
+		if _, ok := seen[index]; ok {
+			continue
+		}
+		seen[index] = struct{}{}
+		unique = append(unique, index)
+	}
+	sort.Ints(unique)
+	return unique
+}
+
+func lowerConfidence(left, right string) string {
+	rank := map[string]int{"low": 1, "medium": 2, "high": 3}
+	if rank[right] < rank[left] {
+		return right
+	}
+	return left
 }
 
 type summaryHeadline struct {
@@ -499,6 +760,11 @@ func (c *OpenAICompatible) summarizeHeadline(ctx context.Context, input SummaryI
 			ShortSummary: topic.ShortSummary,
 		})
 	}
+	if len(mustJSON(headlineTopics)) > maxReduceContentBytes {
+		return nil, errors.New("summary headline input exceeds reduce budget")
+	}
+	ctx, cancel := c.withRequestBudget(ctx)
+	defer cancel()
 	payload := chatRequest{
 		Model: c.model,
 		Messages: []chatMessage{
@@ -525,3 +791,8 @@ const headlineSystemPrompt = `Тебе дан список тем уже гот�
 Составь общий заголовок и краткий обзор на русском языке, опираясь только на переданные темы.
 Не выдумывай факты и не добавляй темы, которых нет в списке.
 Верни только JSON: {"title":"string","overview":"string"}.`
+
+const topicReduceSystemPrompt = `Тебе дан список тем из разных батчей одной Telegram-сводки. Для каждой темы переданы только индекс, заголовок, категория и краткое описание; исходных сообщений нет.
+Найди только семантически одинаковые темы об одном и том же событии, вопросе или сюжете. Не объединяй темы лишь из-за общей категории, похожих слов, одного человека или одной компании. Если связь неочевидна, оставь темы независимыми.
+Для каждой подтвержденной группы дублей верни все исходные индексы ровно один раз, общий точный заголовок и краткое описание. Индексы разных групп не должны пересекаться. Независимые темы не возвращай.
+Верни только JSON: {"merges":[{"topic_indexes":[0,3],"title":"string","short_summary":"string"}]}.`

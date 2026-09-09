@@ -92,6 +92,13 @@ func batchTestServer(t *testing.T, calls *int32, mu *sync.Mutex) *httptest.Serve
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		system := request.Messages[0].Content
+		if strings.Contains(system, "семантически одинаковые темы") {
+			if strings.Contains(request.Messages[1].Content, strings.Repeat("a", 1000)) {
+				t.Error("topic reduce request repeats original message text")
+			}
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"merges\":[]}"}}]}`))
+			return
+		}
 		if strings.Contains(system, "общий заголовок") {
 			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"title\":\"Общий заголовок\",\"overview\":\"Общий обзор\"}"}}]}`))
 			return
@@ -173,8 +180,198 @@ func TestSummarizeBatchesLargeInputAndMergesTopics(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if calls != 4 {
-		t.Fatalf("made %d requests, want 3 batches plus 1 headline", calls)
+	if calls != 5 {
+		t.Fatalf("made %d requests, want 3 batches plus topic reduce and headline", calls)
+	}
+}
+
+func TestApplyTopicMergesCombinesDuplicatesAndSourceIndexes(t *testing.T) {
+	topics := []SummaryTopicResult{
+		{Title: "Kimi вышла", Category: "AI", ShortSummary: "Новая версия", FullSummary: "Первая деталь", WhyImportant: "Влияние", Confidence: "high", Importance: 6, SourceIndexes: []int{4, 1, 4}},
+		{Title: "Релиз Kimi", Category: "AI", ShortSummary: "Обновление модели", FullSummary: "Вторая деталь", WhyImportant: "Влияние", Confidence: "medium", Importance: 8, SourceIndexes: []int{2, 1}},
+		{Title: "Погода", Category: "Природа", ShortSummary: "Шторм", FullSummary: "Независимый сюжет", Confidence: "high", Importance: 5, SourceIndexes: []int{9}},
+	}
+
+	got := applyTopicMerges(topics, []topicMerge{{
+		TopicIndexes: []int{1, 0, 1},
+		Title:        "Релиз новой версии Kimi",
+		ShortSummary: "Модель получила обновление.",
+	}})
+	if len(got) != 2 {
+		t.Fatalf("topics = %d, want merged duplicate plus independent topic", len(got))
+	}
+	if got[0].Title != "Релиз новой версии Kimi" || got[0].ShortSummary != "Модель получила обновление." {
+		t.Fatalf("merged topic = %+v", got[0])
+	}
+	if got[0].Confidence != "medium" || got[0].Importance != 8 {
+		t.Fatalf("merged confidence/importance = %s/%d, want medium/8", got[0].Confidence, got[0].Importance)
+	}
+	if indexes := got[0].SourceIndexes; len(indexes) != 3 || indexes[0] != 1 || indexes[1] != 2 || indexes[2] != 4 {
+		t.Fatalf("merged source indexes = %v, want [1 2 4]", indexes)
+	}
+	if got[1].Title != "Погода" || len(got[1].SourceIndexes) != 1 || got[1].SourceIndexes[0] != 9 {
+		t.Fatalf("independent topic changed: %+v", got[1])
+	}
+}
+
+func TestApplyTopicMergesIgnoresInvalidAndOverlappingGroups(t *testing.T) {
+	topics := []SummaryTopicResult{
+		{Title: "A", SourceIndexes: []int{0}},
+		{Title: "A duplicate", SourceIndexes: []int{1}},
+		{Title: "Independent", SourceIndexes: []int{2}},
+	}
+	got := applyTopicMerges(topics, []topicMerge{
+		{TopicIndexes: []int{0, 1}, Title: "A merged"},
+		{TopicIndexes: []int{1, 2}, Title: "overlap"},
+		{TopicIndexes: []int{2, 99}, Title: "out of range"},
+	})
+	if len(got) != 2 || got[0].Title != "A merged" || got[1].Title != "Independent" {
+		t.Fatalf("partially invalid merges produced %+v", got)
+	}
+}
+
+func TestSplitReduceTopicsBoundsDescriptorPayload(t *testing.T) {
+	topics := make([]SummaryTopicResult, 10)
+	for i := range topics {
+		topics[i] = SummaryTopicResult{Title: strings.Repeat("т", 500), ShortSummary: strings.Repeat("я", 1000)}
+	}
+	order := make([]int, len(topics))
+	for i := range order {
+		order[i] = i
+	}
+	chunks := splitReduceTopics(topics, order, 2500)
+	if len(chunks) < 2 {
+		t.Fatalf("chunks = %d, want bounded split", len(chunks))
+	}
+	for _, chunk := range chunks {
+		size := 0
+		for _, index := range chunk {
+			size += len(mustJSON(compactReduceTopic(index, topics[index]))) + 1
+		}
+		if size > 2500 {
+			t.Fatalf("reduce chunk size = %d, want <= 2500", size)
+		}
+	}
+}
+
+func TestMergeSummariesUsesSemanticReduceWithoutOriginalMessages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request chatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		var content string
+		if strings.Contains(request.Messages[0].Content, "семантически одинаковые темы") {
+			if strings.Contains(request.Messages[1].Content, "SECRET ORIGINAL MESSAGE") {
+				t.Fatal("reduce request contains original message text")
+			}
+			if thinking, ok := request.ChatTemplateKwargs["thinking"].(bool); !ok || thinking || request.Temperature != nil {
+				t.Fatalf("Kimi reduce is not in instant mode: kwargs=%#v temperature=%v", request.ChatTemplateKwargs, request.Temperature)
+			}
+			if request.MaxCompletionTokens != maxReduceCompletionTokens {
+				t.Fatalf("reduce completion tokens = %d, want %d", request.MaxCompletionTokens, maxReduceCompletionTokens)
+			}
+			content = `{"merges":[{"topic_indexes":[0,1],"title":"Один релиз","short_summary":"Два батча описывают один релиз."}]}`
+		} else {
+			content = `{"title":"Общий заголовок","overview":"Общий обзор"}`
+		}
+		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
+			Message chatMessage `json:"message"`
+		}{{Message: chatMessage{Content: content}}}})
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatible(server.URL, "key", "moonshotai/Kimi-K2.6", server.Client())
+	partials := []*SummaryResult{
+		{Title: "B1", Overview: "O1", Topics: []SummaryTopicResult{{Title: "Версия вышла", Category: "AI", ShortSummary: "Компания выпустила модель", FullSummary: "Деталь 1", Confidence: "high", Importance: 6, SourceIndexes: []int{0, 1}}}},
+		{Title: "B2", Overview: "O2", Topics: []SummaryTopicResult{{Title: "Новая версия модели", Category: "AI", ShortSummary: "Состоялся релиз", FullSummary: "Деталь 2", Confidence: "medium", Importance: 7, SourceIndexes: []int{1, 4}}}},
+	}
+	result, err := client.mergeSummaries(context.Background(), SummaryInput{Messages: []SummaryMessageInput{{Text: "SECRET ORIGINAL MESSAGE"}}}, partials)
+	if err != nil {
+		t.Fatalf("mergeSummaries() error = %v", err)
+	}
+	if len(result.Topics) != 1 || result.Topics[0].Title != "Один релиз" {
+		t.Fatalf("topics = %+v, want one semantic merge", result.Topics)
+	}
+	if got := result.Topics[0].SourceIndexes; len(got) != 3 || got[0] != 0 || got[1] != 1 || got[2] != 4 {
+		t.Fatalf("source indexes = %v, want [0 1 4]", got)
+	}
+}
+
+func TestMergeSummariesFallsBackWhenReduceFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	client := NewOpenAICompatible(server.URL, "key", "model", server.Client())
+	client.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	partials := []*SummaryResult{{
+		Title: "Fallback title", Overview: "Fallback overview",
+		Topics: []SummaryTopicResult{
+			{Title: "A", ShortSummary: "A short", FullSummary: "A full", Confidence: "high", Importance: 5, SourceIndexes: []int{0}},
+			{Title: "B", ShortSummary: "B short", FullSummary: "B full", Confidence: "medium", Importance: 4, SourceIndexes: []int{1}},
+		},
+	}}
+	result, err := client.mergeSummaries(context.Background(), SummaryInput{}, partials)
+	if err != nil {
+		t.Fatalf("mergeSummaries() error = %v, want usable fallback", err)
+	}
+	if result.Title != "Fallback title" || result.Overview != "Fallback overview" || len(result.Topics) != 2 {
+		t.Fatalf("fallback result = %+v", result)
+	}
+}
+
+func TestSummarizeBatchesKeepsSuccessfulBatchAfterPartialFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request chatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		system := request.Messages[0].Content
+		if strings.Contains(system, "семантически одинаковые темы") {
+			writeChatContent(t, w, `{"merges":[]}`)
+			return
+		}
+		if strings.Contains(system, "общий заголовок") {
+			writeChatContent(t, w, `{"title":"Reduced","overview":"Reduced overview"}`)
+			return
+		}
+		var input SummaryInput
+		if err := json.Unmarshal([]byte(request.Messages[1].Content), &input); err != nil {
+			t.Fatalf("decode input: %v", err)
+		}
+		if strings.HasPrefix(input.Messages[0].Text, "f") {
+			http.Error(w, "bad batch", http.StatusBadRequest)
+			return
+		}
+		writeChatContent(t, w, `{"title":"Batch","overview":"Batch overview","topics":[{"title":"Survivor","short_summary":"Short","full_summary":"Full","confidence":"high","importance":5,"source_indexes":[0,1]}]}`)
+	}))
+	defer server.Close()
+	client := NewOpenAICompatible(server.URL, "key", "model", server.Client())
+	client.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	result, err := client.Summarize(context.Background(), SummaryInput{Messages: []SummaryMessageInput{
+		{Text: strings.Repeat("f", maxBatchContentBytes/2)},
+		{Text: strings.Repeat("x", maxBatchContentBytes/2)},
+		{Text: strings.Repeat("y", maxBatchContentBytes/2)},
+		{Text: strings.Repeat("y", maxBatchContentBytes/2)},
+	}})
+	if err != nil {
+		t.Fatalf("Summarize() error = %v", err)
+	}
+	if len(result.Topics) != 1 {
+		t.Fatalf("topics = %d, want successful batch fallback", len(result.Topics))
+	}
+	if got := result.Topics[0].SourceIndexes; len(got) != 2 || got[0] != 2 || got[1] != 3 {
+		t.Fatalf("source indexes = %v, want surviving global indexes [2 3]", got)
+	}
+}
+
+func writeChatContent(t *testing.T, w http.ResponseWriter, content string) {
+	t.Helper()
+	if err := json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
+		Message chatMessage `json:"message"`
+	}{{Message: chatMessage{Content: content}}}}); err != nil {
+		t.Errorf("encode response: %v", err)
 	}
 }
 
