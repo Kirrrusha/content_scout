@@ -643,7 +643,11 @@ func hasConcreteSharedAnchor(topics []SummaryTopicResult, merge topicMerge) bool
 		if index < 0 || index >= len(topics) {
 			return false
 		}
-		haystack := strings.ToLower(topics[index].Title + " " + topics[index].ShortSummary)
+		// The short summary helps the model decide whether two topics describe the
+		// same story, but accepting an anchor from prose is too permissive: generic
+		// phrases such as "short post" can occur in unrelated summaries. A concrete
+		// entity must be named in every topic title to pass the local safety check.
+		haystack := strings.ToLower(topics[index].Title)
 		if !strings.Contains(haystack, anchor) {
 			return false
 		}
@@ -838,6 +842,6 @@ const headlineSystemPrompt = `Тебе дан список тем уже гот�
 
 const topicReduceSystemPrompt = `Тебе дан список тем из разных батчей одной Telegram-сводки. Для каждой темы переданы только индекс, заголовок, категория и краткое описание; исходных сообщений нет.
 Найди только семантически одинаковые темы об одном и том же событии, вопросе или сюжете. Не объединяй темы лишь из-за общей категории, похожих слов, одного человека или одной компании. Если связь неочевидна, оставь темы независимыми.
-Для каждой подтвержденной группы дублей верни все исходные индексы ровно один раз, общий точный заголовок и краткое описание. Также верни shared_anchor — название одной конкретной сущности, события, продукта, человека или места, которое дословно присутствует в заголовке или кратком описании каждой темы группы. Общая категория, стиль, слово "новости", "пост", "релиз", "модель" или "интернет" не являются допустимым anchor. Если такого конкретного общего anchor нет, не объединяй темы.
+Для каждой подтвержденной группы дублей верни все исходные индексы ровно один раз, общий точный заголовок и краткое описание. Также верни shared_anchor — название одной конкретной сущности, события, продукта, человека или места, которое дословно присутствует в заголовке каждой темы группы. Общая категория, стиль, источник, слово "новости", "пост", "релиз", "модель" или "интернет" не являются допустимым anchor. Если такого конкретного общего anchor нет во всех заголовках, не объединяй темы.
 Индексы разных групп не должны пересекаться. Независимые темы не возвращай.
 Верни только JSON: {"merges":[{"topic_indexes":[0,3],"shared_anchor":"string","title":"string","short_summary":"string"}]}.`

@@ -315,6 +315,13 @@ func TestHasConcreteSharedAnchorRejectsBroadOrMissingConnection(t *testing.T) {
 	if !hasConcreteSharedAnchor(topics, topicMerge{TopicIndexes: []int{2, 3}, SharedAnchor: "ChatGPT"}) {
 		t.Fatal("shared concrete product anchor should be accepted")
 	}
+	shortSummaryOnly := []SummaryTopicResult{
+		{Title: "Первый материал", ShortSummary: "Упоминает ChatGPT"},
+		{Title: "Второй материал", ShortSummary: "Тоже упоминает ChatGPT"},
+	}
+	if hasConcreteSharedAnchor(shortSummaryOnly, topicMerge{TopicIndexes: []int{0, 1}, SharedAnchor: "ChatGPT"}) {
+		t.Fatal("anchor found only in descriptions must not merge unrelated titles")
+	}
 }
 
 func TestMergeSummariesFallsBackWhenReduceFails(t *testing.T) {
