@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -508,6 +509,7 @@ type reduceTopic struct {
 
 type topicMerge struct {
 	TopicIndexes []int  `json:"topic_indexes"`
+	SharedAnchor string `json:"shared_anchor"`
 	Title        string `json:"title"`
 	ShortSummary string `json:"short_summary"`
 }
@@ -624,12 +626,54 @@ func (c *OpenAICompatible) reduceTopicChunk(ctx context.Context, topics []Summar
 				break
 			}
 		}
-		if insideChunk {
+		if insideChunk && hasConcreteSharedAnchor(topics, merge) {
 			valid = append(valid, merge)
 		}
 	}
 	result.Merges = valid
 	return &result, nil
+}
+
+func hasConcreteSharedAnchor(topics []SummaryTopicResult, merge topicMerge) bool {
+	anchor := strings.ToLower(strings.TrimSpace(merge.SharedAnchor))
+	if utf8.RuneCountInString(anchor) < 4 || genericMergeAnchor(anchor) {
+		return false
+	}
+	for _, index := range merge.TopicIndexes {
+		if index < 0 || index >= len(topics) {
+			return false
+		}
+		haystack := strings.ToLower(topics[index].Title + " " + topics[index].ShortSummary)
+		if !strings.Contains(haystack, anchor) {
+			return false
+		}
+	}
+	return true
+}
+
+func genericMergeAnchor(anchor string) bool {
+	genericPrefixes := []string{
+		"верси", "видео", "выпуск", "интернет", "компан", "контент", "культур",
+		"мем", "модел", "нов", "обновлен", "пост", "проект", "релиз",
+		"сарказм", "сатир", "сериал", "сообщен", "тем", "юмор",
+	}
+	words := strings.FieldsFunc(anchor, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	if len(words) == 0 {
+		return true
+	}
+	for _, word := range words {
+		isGeneric := false
+		for _, prefix := range genericPrefixes {
+			if strings.HasPrefix(word, prefix) {
+				isGeneric = true
+				break
+			}
+		}
+		if !isGeneric {
+			return false
+		}
+	}
+	return true
 }
 
 func applyTopicMerges(topics []SummaryTopicResult, merges []topicMerge) []SummaryTopicResult {
@@ -794,5 +838,6 @@ const headlineSystemPrompt = `Тебе дан список тем уже гот�
 
 const topicReduceSystemPrompt = `Тебе дан список тем из разных батчей одной Telegram-сводки. Для каждой темы переданы только индекс, заголовок, категория и краткое описание; исходных сообщений нет.
 Найди только семантически одинаковые темы об одном и том же событии, вопросе или сюжете. Не объединяй темы лишь из-за общей категории, похожих слов, одного человека или одной компании. Если связь неочевидна, оставь темы независимыми.
-Для каждой подтвержденной группы дублей верни все исходные индексы ровно один раз, общий точный заголовок и краткое описание. Индексы разных групп не должны пересекаться. Независимые темы не возвращай.
-Верни только JSON: {"merges":[{"topic_indexes":[0,3],"title":"string","short_summary":"string"}]}.`
+Для каждой подтвержденной группы дублей верни все исходные индексы ровно один раз, общий точный заголовок и краткое описание. Также верни shared_anchor — название одной конкретной сущности, события, продукта, человека или места, которое дословно присутствует в заголовке или кратком описании каждой темы группы. Общая категория, стиль, слово "новости", "пост", "релиз", "модель" или "интернет" не являются допустимым anchor. Если такого конкретного общего anchor нет, не объединяй темы.
+Индексы разных групп не должны пересекаться. Независимые темы не возвращай.
+Верни только JSON: {"merges":[{"topic_indexes":[0,3],"shared_anchor":"string","title":"string","short_summary":"string"}]}.`

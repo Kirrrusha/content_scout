@@ -194,6 +194,7 @@ func TestApplyTopicMergesCombinesDuplicatesAndSourceIndexes(t *testing.T) {
 
 	got := applyTopicMerges(topics, []topicMerge{{
 		TopicIndexes: []int{1, 0, 1},
+		SharedAnchor: "Kimi",
 		Title:        "Релиз новой версии Kimi",
 		ShortSummary: "Модель получила обновление.",
 	}})
@@ -271,7 +272,7 @@ func TestMergeSummariesUsesSemanticReduceWithoutOriginalMessages(t *testing.T) {
 			if request.MaxCompletionTokens != maxReduceCompletionTokens {
 				t.Fatalf("reduce completion tokens = %d, want %d", request.MaxCompletionTokens, maxReduceCompletionTokens)
 			}
-			content = `{"merges":[{"topic_indexes":[0,1],"title":"Один релиз","short_summary":"Два батча описывают один релиз."}]}`
+			content = `{"merges":[{"topic_indexes":[0,1],"shared_anchor":"Kimi","title":"Один релиз","short_summary":"Два батча описывают один релиз."}]}`
 		} else {
 			content = `{"title":"Общий заголовок","overview":"Общий обзор"}`
 		}
@@ -283,8 +284,8 @@ func TestMergeSummariesUsesSemanticReduceWithoutOriginalMessages(t *testing.T) {
 
 	client := NewOpenAICompatible(server.URL, "key", "moonshotai/Kimi-K2.6", server.Client())
 	partials := []*SummaryResult{
-		{Title: "B1", Overview: "O1", Topics: []SummaryTopicResult{{Title: "Версия вышла", Category: "AI", ShortSummary: "Компания выпустила модель", FullSummary: "Деталь 1", Confidence: "high", Importance: 6, SourceIndexes: []int{0, 1}}}},
-		{Title: "B2", Overview: "O2", Topics: []SummaryTopicResult{{Title: "Новая версия модели", Category: "AI", ShortSummary: "Состоялся релиз", FullSummary: "Деталь 2", Confidence: "medium", Importance: 7, SourceIndexes: []int{1, 4}}}},
+		{Title: "B1", Overview: "O1", Topics: []SummaryTopicResult{{Title: "Kimi: версия вышла", Category: "AI", ShortSummary: "Компания выпустила модель Kimi", FullSummary: "Деталь 1", Confidence: "high", Importance: 6, SourceIndexes: []int{0, 1}}}},
+		{Title: "B2", Overview: "O2", Topics: []SummaryTopicResult{{Title: "Новая версия Kimi", Category: "AI", ShortSummary: "Состоялся релиз Kimi", FullSummary: "Деталь 2", Confidence: "medium", Importance: 7, SourceIndexes: []int{1, 4}}}},
 	}
 	result, err := client.mergeSummaries(context.Background(), SummaryInput{Messages: []SummaryMessageInput{{Text: "SECRET ORIGINAL MESSAGE"}}}, partials)
 	if err != nil {
@@ -295,6 +296,24 @@ func TestMergeSummariesUsesSemanticReduceWithoutOriginalMessages(t *testing.T) {
 	}
 	if got := result.Topics[0].SourceIndexes; len(got) != 3 || got[0] != 0 || got[1] != 1 || got[2] != 4 {
 		t.Fatalf("source indexes = %v, want [0 1 4]", got)
+	}
+}
+
+func TestHasConcreteSharedAnchorRejectsBroadOrMissingConnection(t *testing.T) {
+	topics := []SummaryTopicResult{
+		{Title: "Фанфики и мёртвый интернет", ShortSummary: "Сатирический пост о фанфиках"},
+		{Title: "Индийский Человек-паук", ShortSummary: "Сатирический пост о кино"},
+		{Title: "ChatGPT заблокирован в России", ShortSummary: "Доступ к ChatGPT ограничен"},
+		{Title: "ChatGPT снова доступен", ShortSummary: "Блокировка ChatGPT снята"},
+	}
+	if hasConcreteSharedAnchor(topics, topicMerge{TopicIndexes: []int{0, 1}, SharedAnchor: "сатирический пост"}) {
+		t.Fatal("broad stylistic anchor must not merge unrelated posts")
+	}
+	if hasConcreteSharedAnchor(topics, topicMerge{TopicIndexes: []int{0, 1}, SharedAnchor: "фанфики"}) {
+		t.Fatal("anchor missing from one topic must be rejected")
+	}
+	if !hasConcreteSharedAnchor(topics, topicMerge{TopicIndexes: []int{2, 3}, SharedAnchor: "ChatGPT"}) {
+		t.Fatal("shared concrete product anchor should be accepted")
 	}
 }
 
