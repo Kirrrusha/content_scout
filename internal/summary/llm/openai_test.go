@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestOpenAICompatibleSummarize(t *testing.T) {
@@ -90,5 +92,77 @@ func TestOpenAICompatibleIncludesErrorBody(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "path=/chat/completions") || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("error = %q", err)
+	}
+}
+
+func TestOpenAICompatibleDoesNotRetryNonTemporaryStatus(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	_, err := NewOpenAICompatible(server.URL, "key", "model", server.Client()).Summarize(context.Background(), SummaryInput{
+		Messages: []SummaryMessageInput{{Index: 0, Text: "Message"}},
+	})
+	if err == nil {
+		t.Fatal("Summarize() error = nil, want error")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("requests = %d, want 1 for a non-temporary error", got)
+	}
+}
+
+func TestOpenAICompatibleTimeoutCoversAllRetries(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(250 * time.Millisecond):
+		}
+	}))
+	defer server.Close()
+	client := server.Client()
+	client.Timeout = 30 * time.Millisecond
+	llmClient := NewOpenAICompatible(server.URL, "key", "model", client)
+
+	started := time.Now()
+	_, err := llmClient.Summarize(context.Background(), SummaryInput{
+		Messages: []SummaryMessageInput{{Index: 0, Text: "Message"}},
+	})
+	if err == nil {
+		t.Fatal("Summarize() error = nil, want timeout")
+	}
+	if elapsed := time.Since(started); elapsed > 150*time.Millisecond {
+		t.Fatalf("Summarize() took %s, want one timeout budget", elapsed)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("requests = %d, want no retries after timeout", got)
+	}
+}
+
+func TestOpenAICompatibleRetriesTemporaryStatus(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
+			Message chatMessage `json:"message"`
+		}{{Message: chatMessage{Role: "assistant", Content: `{"title":"Digest","overview":"Overview","topics":[{"title":"Topic","short_summary":"Short","full_summary":"Full","confidence":"high","importance":5,"source_indexes":[0]}]}`}}}})
+	}))
+	defer server.Close()
+
+	_, err := NewOpenAICompatible(server.URL, "key", "model", server.Client()).Summarize(context.Background(), SummaryInput{
+		Messages: []SummaryMessageInput{{Index: 0, Text: "Message"}},
+	})
+	if err != nil {
+		t.Fatalf("Summarize() error = %v", err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("requests = %d, want one retry after a temporary error", got)
 	}
 }

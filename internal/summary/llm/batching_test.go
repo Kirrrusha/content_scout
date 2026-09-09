@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 func messagesOfSize(count, size int) []SummaryMessageInput {
@@ -41,14 +42,24 @@ func TestSplitSummaryMessagesRenumbersAndKeepsGlobalIndexes(t *testing.T) {
 	}
 }
 
-func TestSplitSummaryMessagesKeepsOversizedMessage(t *testing.T) {
-	batches := splitSummaryMessages(messagesOfSize(2, 5000), 100)
+func TestSplitSummaryMessagesTruncatesOversizedMessage(t *testing.T) {
+	messages := []SummaryMessageInput{
+		{Index: 0, Text: strings.Repeat("я", 100)},
+		{Index: 1, Text: strings.Repeat("a", 5000)},
+	}
+	batches := splitSummaryMessages(messages, 101)
 	if len(batches) != 2 {
 		t.Fatalf("got %d batches, want 2", len(batches))
 	}
 	for _, batch := range batches {
 		if len(batch.messages) != 1 {
 			t.Fatalf("batch holds %d messages, want 1", len(batch.messages))
+		}
+		if got := len(batch.messages[0].Text) + len(batch.messages[0].ChatTitle); got > 101 {
+			t.Fatalf("batch message is %d bytes, want at most 101", got)
+		}
+		if !utf8.ValidString(batch.messages[0].Text) {
+			t.Fatal("truncated message is not valid UTF-8")
 		}
 	}
 }

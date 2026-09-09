@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type OpenAICompatible struct {
@@ -73,6 +75,9 @@ func (c *OpenAICompatible) Summarize(ctx context.Context, input SummaryInput) (*
 }
 
 func (c *OpenAICompatible) summarizeBatch(ctx context.Context, input SummaryInput) (*SummaryResult, error) {
+	ctx, cancel := c.withRequestBudget(ctx)
+	defer cancel()
+
 	payload := chatRequest{
 		Model: c.model,
 		Messages: []chatMessage{
@@ -87,18 +92,34 @@ func (c *OpenAICompatible) summarizeBatch(ctx context.Context, input SummaryInpu
 		raw, err := c.doChat(ctx, payload)
 		if err != nil {
 			lastErr = err
+			if ctx.Err() != nil || !isRetryableLLMError(err) {
+				break
+			}
 			sleepBackoff(ctx, attempt)
 			continue
 		}
 		result, err := ParseSummaryResult(raw)
 		if err != nil {
 			lastErr = err
+			if ctx.Err() != nil {
+				break
+			}
 			sleepBackoff(ctx, attempt)
 			continue
 		}
 		return result, nil
 	}
 	return nil, fmt.Errorf("summarize with llm: %w", lastErr)
+}
+
+// withRequestBudget applies the configured HTTP timeout to the complete logical
+// request, including retries. http.Client.Timeout alone restarts for every retry,
+// so retries: 2 could otherwise turn a three-minute batch into a nine-minute one.
+func (c *OpenAICompatible) withRequestBudget(ctx context.Context) (context.Context, context.CancelFunc) {
+	if c.client == nil || c.client.Timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, c.client.Timeout)
 }
 
 func (c *OpenAICompatible) ConvertToArticle(ctx context.Context, input ArticleInput) (*ArticleResult, error) {
@@ -108,6 +129,9 @@ func (c *OpenAICompatible) ConvertToArticle(ctx context.Context, input ArticleIn
 	if c.model == "" {
 		return nil, errors.New("LLM_MODEL is not configured")
 	}
+	ctx, cancel := c.withRequestBudget(ctx)
+	defer cancel()
+
 	payload := chatRequest{
 		Model: c.model,
 		Messages: []chatMessage{
@@ -122,12 +146,18 @@ func (c *OpenAICompatible) ConvertToArticle(ctx context.Context, input ArticleIn
 		raw, err := c.doChat(ctx, payload)
 		if err != nil {
 			lastErr = err
+			if ctx.Err() != nil || !isRetryableLLMError(err) {
+				break
+			}
 			sleepBackoff(ctx, attempt)
 			continue
 		}
 		result, err := ParseArticleResult(raw)
 		if err != nil {
 			lastErr = err
+			if ctx.Err() != nil {
+				break
+			}
 			sleepBackoff(ctx, attempt)
 			continue
 		}
@@ -155,7 +185,7 @@ func (c *OpenAICompatible) doChat(ctx context.Context, payload chatRequest) ([]b
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil, fmt.Errorf("llm temporary status: %d", resp.StatusCode)
+		return nil, retryableLLMError{err: fmt.Errorf("llm temporary status: %d", resp.StatusCode)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -169,6 +199,22 @@ func (c *OpenAICompatible) doChat(ctx context.Context, payload chatRequest) ([]b
 		return nil, errors.New("llm response has no content")
 	}
 	return []byte(decoded.Choices[0].Message.Content), nil
+}
+
+type retryableLLMError struct {
+	err error
+}
+
+func (e retryableLLMError) Error() string { return e.err.Error() }
+func (e retryableLLMError) Unwrap() error { return e.err }
+
+func isRetryableLLMError(err error) bool {
+	var retryable retryableLLMError
+	if errors.As(err, &retryable) {
+		return true
+	}
+	var networkErr net.Error
+	return errors.As(err, &networkErr) && !networkErr.Timeout()
 }
 
 func sleepBackoff(ctx context.Context, attempt int) {
@@ -258,8 +304,8 @@ func splitSummaryMessages(messages []SummaryMessageInput, maxBytes int) []summar
 	current := summaryBatch{}
 	size := 0
 	for i, message := range messages {
+		message = limitSummaryMessageSize(message, maxBytes)
 		messageSize := len(message.Text) + len(message.ChatTitle)
-		// Keep at least one message per batch, however long it is on its own.
 		if len(current.messages) > 0 && size+messageSize > maxBytes {
 			batches = append(batches, current)
 			current = summaryBatch{}
@@ -277,6 +323,32 @@ func splitSummaryMessages(messages []SummaryMessageInput, maxBytes int) []summar
 	return batches
 }
 
+func limitSummaryMessageSize(message SummaryMessageInput, maxBytes int) SummaryMessageInput {
+	if maxBytes <= 0 {
+		return message
+	}
+	if len(message.ChatTitle) >= maxBytes {
+		message.ChatTitle = truncateUTF8(message.ChatTitle, maxBytes)
+		message.Text = ""
+		return message
+	}
+	message.Text = truncateUTF8(message.Text, maxBytes-len(message.ChatTitle))
+	return message
+}
+
+func truncateUTF8(value string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(value) <= maxBytes {
+		return value
+	}
+	for maxBytes > 0 && !utf8.RuneStart(value[maxBytes]) {
+		maxBytes--
+	}
+	return value[:maxBytes]
+}
+
 func (c *OpenAICompatible) summarizeBatches(ctx context.Context, input SummaryInput, batches []summaryBatch) ([]*SummaryResult, error) {
 	results := make([]*SummaryResult, len(batches))
 	errs := make([]error, len(batches))
@@ -286,7 +358,12 @@ func (c *OpenAICompatible) summarizeBatches(ctx context.Context, input SummaryIn
 		wg.Add(1)
 		go func(i int, batch summaryBatch) {
 			defer wg.Done()
-			semaphore <- struct{}{}
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				errs[i] = ctx.Err()
+				return
+			}
 			defer func() { <-semaphore }()
 			batchInput := SummaryInput{Language: input.Language, Format: input.Format, Messages: batch.messages}
 			result, err := c.summarizeBatch(ctx, batchInput)
