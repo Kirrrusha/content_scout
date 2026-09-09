@@ -37,6 +37,7 @@ type Server struct {
 	exports    ExportController
 	schedules  ScheduleController
 	jobs       JobController
+	telegramRead TelegramReadController
 }
 
 type Options struct {
@@ -191,6 +192,7 @@ func NewWithOptions(addr string, db *sql.DB, logger *slog.Logger, options Option
 	mux.HandleFunc("POST /telegram/auth/password", server.authPassword)
 	mux.HandleFunc("DELETE /telegram/session", server.authDeleteSession)
 	mux.HandleFunc("POST /telegram/sync", server.telegramSync)
+	mux.HandleFunc("POST /telegram/messages/read", server.telegramMessagesRead)
 	mux.HandleFunc("GET /telegram/folders", server.telegramFolders)
 	mux.HandleFunc("GET /telegram/chats", server.telegramChats)
 	mux.HandleFunc("GET /groups", server.groupsList)
@@ -242,6 +244,10 @@ func (s *Server) SetSchedules(controller ScheduleController) {
 
 func (s *Server) SetJobs(controller JobController) {
 	s.jobs = controller
+}
+
+func (s *Server) SetTelegramReadController(controller TelegramReadController) {
+	s.telegramRead = controller
 }
 
 func (s *Server) Run() error {

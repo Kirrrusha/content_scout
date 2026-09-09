@@ -185,11 +185,14 @@ DELETE /telegram/session
 
 ```text
 POST   /telegram/sync
+POST   /telegram/messages/read
 GET    /telegram/folders?telegram_user_id=...
 GET    /telegram/chats?telegram_user_id=...
 ```
 
 `POST /telegram/sync` принимает `{"telegram_user_id": ...}`. Личные чаты по умолчанию не сохраняются. Ответы с кэшированными чатами содержат название, тип, unread count, mute/archive flags и last message id.
+
+`POST /telegram/messages/read` используется внутри системы: после сохранения сводки `summary-worker` просит API отметить сообщения прочитанными. Операцию TDLib выполняет процесс API, поэтому базу Telegram-сессии открывает только один процесс.
 
 Внутренние endpoints групп источников:
 

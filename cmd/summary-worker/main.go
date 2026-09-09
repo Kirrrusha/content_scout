@@ -104,7 +104,12 @@ func main() {
 		postgres.NewReadPositionRepository(db),
 		newSummarizer(cfg, logger),
 	)
-	summarizer.SetTelegramReadMarker(tdlib.NewReadService(cfg.TelegramOwnerID, userRepo, sessionRepo, factory))
+	summarizer.SetLogger(logger)
+	summarizer.SetTelegramReadMarker(tdlib.NewHTTPReadMarker(
+		cfg.InternalAPIURL,
+		cfg.ServiceToken,
+		&http.Client{Timeout: 30 * time.Second},
+	))
 	exporter := obsidian.NewService(
 		cfg.TelegramOwnerID,
 		cfg.ExportDir,

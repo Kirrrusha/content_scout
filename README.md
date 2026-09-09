@@ -185,11 +185,14 @@ Internal sync endpoints:
 
 ```text
 POST   /telegram/sync
+POST   /telegram/messages/read
 GET    /telegram/folders?telegram_user_id=...
 GET    /telegram/chats?telegram_user_id=...
 ```
 
 `POST /telegram/sync` uses `{"telegram_user_id": ...}`. Private chats are excluded from persistence by default. Cached chat responses include title, type, unread count, mute/archive flags, and last message id.
+
+`POST /telegram/messages/read` is used internally by `summary-worker` after a summary is saved. The API process performs the TDLib mutation so only one process opens the Telegram session database.
 
 Internal source group endpoints:
 

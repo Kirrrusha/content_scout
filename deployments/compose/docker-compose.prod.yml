@@ -101,9 +101,13 @@ services:
     image: ${CLOUDRU_REGISTRY:?CLOUDRU_REGISTRY is required}/content_scout-summary-worker:${IMAGE_TAG:?IMAGE_TAG is required}
     user: *app-user
     env_file: *app-env-file
+    environment:
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:8080}
     depends_on:
       volume-permissions:
         condition: service_completed_successfully
+      api:
+        condition: service_healthy
     restart: unless-stopped
     volumes:
       - exports:/data/exports

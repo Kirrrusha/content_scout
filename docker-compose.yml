@@ -116,7 +116,11 @@ services:
       LOG_RETENTION: ${LOG_RETENTION:-24h}
       LOG_ROTATION_INTERVAL: ${LOG_ROTATION_INTERVAL:-1h}
       SUMMARY_RETENTION: ${SUMMARY_RETENTION:-0}
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:8080}
     profiles: ["worker"]
+    depends_on:
+      api:
+        condition: service_healthy
     volumes:
       - exports:/data/exports
       - ./data/logs:/data/logs

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ type Service struct {
 	chats           storage.TelegramChatRepository
 	positions       storage.ReadPositionRepository
 	readMarker      TelegramReadMarker
+	logger          *slog.Logger
 	pipeline        *pipeline.Pipeline
 	summarizer      llm.Summarizer
 	now             func() time.Time
@@ -61,9 +63,16 @@ func NewService(ownerTelegramID int64, users storage.UserRepository, collections
 		summaries:       summaries,
 		chats:           chats,
 		positions:       positions,
+		logger:          slog.Default(),
 		pipeline:        pipeline.New(),
 		summarizer:      summarizer,
 		now:             time.Now,
+	}
+}
+
+func (s *Service) SetLogger(logger *slog.Logger) {
+	if logger != nil {
+		s.logger = logger
 	}
 }
 
@@ -150,8 +159,12 @@ func (s *Service) GenerateFromCollection(ctx context.Context, req GenerateReques
 	// Read markers are intentionally best-effort and happen only after the summary
 	// is fully saved. A read-marker failure must not turn a persisted summary into
 	// a failed generation or hide it from the user.
-	_ = s.markReadPositions(ctx, user.ID, messages)
-	_ = s.markTelegramMessagesRead(ctx, req.TelegramUserID, messages)
+	if err := s.markReadPositions(ctx, user.ID, messages); err != nil {
+		s.logger.Warn("mark summary read positions failed", "summary_job_id", summaryJob.ID, "error", err)
+	}
+	if err := s.markTelegramMessagesRead(ctx, req.TelegramUserID, messages); err != nil {
+		s.logger.Warn("mark telegram messages read failed", "summary_job_id", summaryJob.ID, "error", err)
+	}
 	return &GenerateResult{
 		SummaryID:             saved.ID,
 		SummaryJobID:          summaryJob.ID,

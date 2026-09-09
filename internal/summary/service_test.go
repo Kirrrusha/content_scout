@@ -1,8 +1,10 @@
 package summary
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +133,8 @@ func TestGenerateFromCollectionDoesNotFailSavedSummaryWhenTelegramReadMarkFails(
 	positions := newFakePositions()
 	readMarker := &fakeReadMarker{err: errors.New("telegram read failed")}
 	service := NewService(42, users, collections, summaries, chats, positions, fakeSummarizer{})
+	var logs bytes.Buffer
+	service.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
 	service.SetTelegramReadMarker(readMarker)
 
 	result, err := service.GenerateFromCollection(ctx, GenerateRequest{
@@ -150,6 +154,9 @@ func TestGenerateFromCollectionDoesNotFailSavedSummaryWhenTelegramReadMarkFails(
 	}
 	if position == nil || position.LastSummarizedMessageID != 101 {
 		t.Fatalf("position = %+v, want message 101", position)
+	}
+	if !strings.Contains(logs.String(), "mark telegram messages read failed") || !strings.Contains(logs.String(), "summary_job_id=50") {
+		t.Fatalf("read marker failure was not logged: %s", logs.String())
 	}
 }
 

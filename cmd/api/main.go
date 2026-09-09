@@ -114,7 +114,9 @@ func main() {
 		postgres.NewReadPositionRepository(db),
 		newSummarizer(cfg, logger),
 	)
-	summaryService.SetTelegramReadMarker(tdlib.NewReadService(cfg.TelegramOwnerID, userRepo, sessionRepo, factory))
+	telegramReadService := tdlib.NewReadService(cfg.TelegramOwnerID, userRepo, sessionRepo, factory)
+	summaryService.SetLogger(logger)
+	summaryService.SetTelegramReadMarker(telegramReadService)
 	summaryBrowser := summary.NewBrowser(cfg.TelegramOwnerID, userRepo, summaryRepo)
 	articleService := article.NewService(
 		cfg.TelegramOwnerID,
@@ -168,6 +170,7 @@ func main() {
 	)
 	server.SetSchedules(scheduleService)
 	server.SetJobs(jobRepo)
+	server.SetTelegramReadController(telegramReadService)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Run()
