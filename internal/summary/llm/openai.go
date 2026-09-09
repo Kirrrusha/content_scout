@@ -84,8 +84,10 @@ func (c *OpenAICompatible) summarizeBatch(ctx context.Context, input SummaryInpu
 			{Role: "system", Content: summarySystemPrompt},
 			{Role: "user", Content: mustJSON(input)},
 		},
-		Temperature:    0.2,
-		ResponseFormat: map[string]string{"type": "json_object"},
+		Temperature:         completionTemperature(c.model, 0.2),
+		MaxCompletionTokens: maxSummaryCompletionTokens,
+		ResponseFormat:      map[string]string{"type": "json_object"},
+		ChatTemplateKwargs:  instantModeTemplateArgs(c.model),
 	}
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
@@ -138,8 +140,10 @@ func (c *OpenAICompatible) ConvertToArticle(ctx context.Context, input ArticleIn
 			{Role: "system", Content: articleSystemPrompt},
 			{Role: "user", Content: mustJSON(input)},
 		},
-		Temperature:    0.25,
-		ResponseFormat: map[string]string{"type": "json_object"},
+		Temperature:         completionTemperature(c.model, 0.25),
+		MaxCompletionTokens: maxArticleCompletionTokens,
+		ResponseFormat:      map[string]string{"type": "json_object"},
+		ChatTemplateKwargs:  instantModeTemplateArgs(c.model),
 	}
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
@@ -238,10 +242,37 @@ func mustJSON(value any) string {
 }
 
 type chatRequest struct {
-	Model          string            `json:"model"`
-	Messages       []chatMessage     `json:"messages"`
-	Temperature    float64           `json:"temperature"`
-	ResponseFormat map[string]string `json:"response_format,omitempty"`
+	Model               string            `json:"model"`
+	Messages            []chatMessage     `json:"messages"`
+	Temperature         *float64          `json:"temperature,omitempty"`
+	MaxCompletionTokens int               `json:"max_completion_tokens,omitempty"`
+	ResponseFormat      map[string]string `json:"response_format,omitempty"`
+	ChatTemplateKwargs  map[string]any    `json:"chat_template_kwargs,omitempty"`
+}
+
+const (
+	maxSummaryCompletionTokens  = 3500
+	maxArticleCompletionTokens  = 6000
+	maxHeadlineCompletionTokens = 800
+)
+
+// Kimi K2.5/K2.6 enable reasoning by default. Summary generation is a bounded
+// transformation task, and in production the model repeatedly spent the whole
+// request timeout on reasoning without emitting any JSON. Cloud.ru exposes the
+// model's instant mode through the vLLM chat template arguments.
+func instantModeTemplateArgs(model string) map[string]any {
+	normalized := strings.ToLower(model)
+	if strings.Contains(normalized, "kimi-k2.5") || strings.Contains(normalized, "kimi-k2.6") {
+		return map[string]any{"thinking": false}
+	}
+	return nil
+}
+
+func completionTemperature(model string, value float64) *float64 {
+	if instantModeTemplateArgs(model) != nil {
+		return nil
+	}
+	return &value
 }
 
 type chatMessage struct {
@@ -474,8 +505,10 @@ func (c *OpenAICompatible) summarizeHeadline(ctx context.Context, input SummaryI
 			{Role: "system", Content: headlineSystemPrompt},
 			{Role: "user", Content: mustJSON(map[string]any{"language": input.Language, "topics": headlineTopics})},
 		},
-		Temperature:    0.2,
-		ResponseFormat: map[string]string{"type": "json_object"},
+		Temperature:         completionTemperature(c.model, 0.2),
+		MaxCompletionTokens: maxHeadlineCompletionTokens,
+		ResponseFormat:      map[string]string{"type": "json_object"},
+		ChatTemplateKwargs:  instantModeTemplateArgs(c.model),
 	}
 	raw, err := c.doChat(ctx, payload)
 	if err != nil {

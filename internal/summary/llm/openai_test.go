@@ -26,6 +26,15 @@ func TestOpenAICompatibleSummarize(t *testing.T) {
 		if len(request.Messages) != 2 {
 			t.Fatalf("messages len = %d", len(request.Messages))
 		}
+		if request.MaxCompletionTokens != maxSummaryCompletionTokens {
+			t.Fatalf("max_completion_tokens = %d, want %d", request.MaxCompletionTokens, maxSummaryCompletionTokens)
+		}
+		if thinking, ok := request.ChatTemplateKwargs["thinking"].(bool); !ok || thinking {
+			t.Fatalf("chat_template_kwargs = %#v, want thinking=false", request.ChatTemplateKwargs)
+		}
+		if request.Temperature != nil {
+			t.Fatalf("temperature = %v, want omitted for Kimi instant mode", *request.Temperature)
+		}
 		if !strings.Contains(request.Messages[0].Content, "разбей весь набор сообщений на самостоятельные темы") {
 			t.Fatalf("system prompt does not require topic clustering: %q", request.Messages[0].Content)
 		}
@@ -38,7 +47,7 @@ func TestOpenAICompatibleSummarize(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := NewOpenAICompatible(server.URL, "key", "model", server.Client()).Summarize(context.Background(), SummaryInput{
+	result, err := NewOpenAICompatible(server.URL, "key", "moonshotai/Kimi-K2.6", server.Client()).Summarize(context.Background(), SummaryInput{
 		Language: "ru",
 		Format:   "standard",
 		Messages: []SummaryMessageInput{{Index: 0, Text: "Message"}},
@@ -48,6 +57,16 @@ func TestOpenAICompatibleSummarize(t *testing.T) {
 	}
 	if result.Title != "Digest" || len(result.Topics) != 1 {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestOpenAICompatibleKeepsTemperatureForGenericModel(t *testing.T) {
+	temperature := completionTemperature("generic-model", 0.2)
+	if temperature == nil || *temperature != 0.2 {
+		t.Fatalf("temperature = %v, want 0.2", temperature)
+	}
+	if args := instantModeTemplateArgs("generic-model"); args != nil {
+		t.Fatalf("chat template args = %#v, want nil", args)
 	}
 }
 
