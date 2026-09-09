@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/summary/filter"
 	"github.com/kirilllebedenko/content_scout/internal/summary/llm"
 	"github.com/kirilllebedenko/content_scout/internal/summary/pipeline"
+	telegramlink "github.com/kirilllebedenko/content_scout/internal/telegram/link"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
@@ -341,7 +341,7 @@ func topicMessages(sourceIndexes []int, processed *pipeline.Result, chatByID map
 				TelegramChatID:     message.Source.TelegramChatID,
 				MessageID:          message.Source.MessageID,
 				SourceTitle:        chatTitle(chat),
-				SourceURL:          telegramMessageURL(message.Source.TelegramChatID, message.Source.MessageID, stringValue(chat.Username), message.Source.URL),
+				SourceURL:          telegramlink.MessageURL(message.Source.TelegramChatID, message.Source.MessageID, stringValue(chat.Username), message.Source.URL),
 				ClusterIndex:       index,
 				IsCanonical:        collectedID == canonicalID,
 			})
@@ -402,17 +402,6 @@ func stringValue(value *string) string {
 	return *value
 }
 
-func telegramMessageURL(telegramChatID, messageID int64, username, fallback string) string {
-	if strings.TrimSpace(username) != "" {
-		return fmt.Sprintf("https://t.me/%s/%d", strings.TrimPrefix(strings.TrimSpace(username), "@"), messageID)
-	}
-	chatID := strconv.FormatInt(telegramChatID, 10)
-	if strings.HasPrefix(chatID, "-100") {
-		return fmt.Sprintf("https://t.me/c/%s/%d", strings.TrimPrefix(chatID, "-100"), messageID)
-	}
-	return strings.TrimSpace(fallback)
-}
-
 func confidence(value string) domain.ConfidenceLevel {
 	switch value {
 	case "high":
@@ -457,7 +446,7 @@ func topicMessageLinks(sourceIndexes []int, processed *pipeline.Result, chatByID
 		}
 		for _, message := range processed.Clusters[index].Messages {
 			chat := chatByID[message.Source.ChatID]
-			url := telegramMessageURL(message.Source.TelegramChatID, message.Source.MessageID, stringValue(chat.Username), message.Source.URL)
+			url := telegramlink.MessageURL(message.Source.TelegramChatID, message.Source.MessageID, stringValue(chat.Username), message.Source.URL)
 			if url == "" {
 				continue
 			}

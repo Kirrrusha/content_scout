@@ -14,6 +14,7 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/storage"
 	"github.com/kirilllebedenko/content_scout/internal/summary"
 	"github.com/kirilllebedenko/content_scout/internal/summary/llm"
+	telegramlink "github.com/kirilllebedenko/content_scout/internal/telegram/link"
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
@@ -197,7 +198,7 @@ func (s *Service) sources(ctx context.Context, userID, summaryJobID int64) ([]do
 			TelegramChatID: message.TelegramChatID,
 			MessageID:      message.MessageID,
 			SourceTitle:    firstNonEmpty(chatTitles[message.ChatID], message.SenderName, "Telegram"),
-			SourceURL:      telegramMessageURL(message.TelegramChatID, message.MessageID, chatUsernames[message.ChatID], message.URL),
+			SourceURL:      telegramlink.MessageURL(message.TelegramChatID, message.MessageID, chatUsernames[message.ChatID], message.URL),
 			PublishedAt:    message.Date,
 		}
 		sources = append(sources, source)
@@ -398,16 +399,6 @@ func slugify(value string) string {
 		return "article"
 	}
 	return value
-}
-
-func telegramMessageURL(telegramChatID, messageID int64, username, fallback string) string {
-	if username != "" {
-		return fmt.Sprintf("https://t.me/%s/%d", strings.TrimPrefix(username, "@"), messageID)
-	}
-	if strings.HasPrefix(strconv.FormatInt(telegramChatID, 10), "-100") {
-		return fmt.Sprintf("https://t.me/c/%s/%d", strings.TrimPrefix(strconv.FormatInt(telegramChatID, 10), "-100"), messageID)
-	}
-	return fallback
 }
 
 func firstNonEmpty(values ...string) string {

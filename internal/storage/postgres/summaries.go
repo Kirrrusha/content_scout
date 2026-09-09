@@ -5,11 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
+	telegramlink "github.com/kirilllebedenko/content_scout/internal/telegram/link"
 )
 
 type SummaryRepository struct {
@@ -320,7 +319,7 @@ func (r *SummaryRepository) attachTopicMessages(ctx context.Context, summaryID i
 			return fmt.Errorf("scan summary topic message: %w", err)
 		}
 		message.TopicID = topicID
-		message.SourceURL = telegramMessageURL(message.TelegramChatID, message.MessageID, username.String, fallbackURL.String)
+		message.SourceURL = telegramlink.MessageURL(message.TelegramChatID, message.MessageID, username.String, fallbackURL.String)
 		if index, ok := topicByID[topicID]; ok {
 			topics[index].Messages = append(topics[index].Messages, message)
 		}
@@ -359,24 +358,13 @@ func (r *SummaryRepository) attachExcludedMessages(ctx context.Context, summary 
 		if err := rows.Scan(&message.CollectedMessageID, &message.TelegramChatID, &message.MessageID, &message.SourceTitle, &username, &fallbackURL, &message.Reason); err != nil {
 			return fmt.Errorf("scan excluded summary message: %w", err)
 		}
-		message.SourceURL = telegramMessageURL(message.TelegramChatID, message.MessageID, username.String, fallbackURL.String)
+		message.SourceURL = telegramlink.MessageURL(message.TelegramChatID, message.MessageID, username.String, fallbackURL.String)
 		summary.ExcludedMessages = append(summary.ExcludedMessages, message)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate excluded summary messages: %w", err)
 	}
 	return nil
-}
-
-func telegramMessageURL(telegramChatID, messageID int64, username, fallback string) string {
-	if strings.TrimSpace(username) != "" {
-		return fmt.Sprintf("https://t.me/%s/%d", strings.TrimPrefix(strings.TrimSpace(username), "@"), messageID)
-	}
-	chatID := strconv.FormatInt(telegramChatID, 10)
-	if strings.HasPrefix(chatID, "-100") {
-		return fmt.Sprintf("https://t.me/c/%s/%d", strings.TrimPrefix(chatID, "-100"), messageID)
-	}
-	return strings.TrimSpace(fallback)
 }
 
 func scanSummaryJob(row interface {

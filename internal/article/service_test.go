@@ -24,7 +24,7 @@ func TestConvertTopicCreatesDraftArticle(t *testing.T) {
 			Position:     1,
 			Messages: []domain.SummaryTopicMessage{{
 				TelegramChatID: -100123,
-				MessageID:      900,
+				MessageID:      int64(900) << 20,
 				SourceTitle:    "Golang Digest",
 				SourceURL:      "https://t.me/golang_digest/900",
 			}},
@@ -35,7 +35,7 @@ func TestConvertTopicCreatesDraftArticle(t *testing.T) {
 		UserID:         1,
 		ChatID:         5,
 		TelegramChatID: -100123,
-		MessageID:      900,
+		MessageID:      int64(900) << 20,
 		Date:           time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC),
 		Text:           "Go release notes",
 	}, {
@@ -43,7 +43,7 @@ func TestConvertTopicCreatesDraftArticle(t *testing.T) {
 		UserID:         1,
 		ChatID:         6,
 		TelegramChatID: -100999,
-		MessageID:      901,
+		MessageID:      int64(901) << 20,
 		Date:           time.Date(2026, 7, 13, 10, 5, 0, 0, time.UTC),
 		Text:           "Unrelated devops note",
 	}}}

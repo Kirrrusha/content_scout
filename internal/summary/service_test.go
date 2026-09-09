@@ -22,8 +22,8 @@ func TestGenerateFromCollectionPersistsSummary(t *testing.T) {
 	collections := &fakeCollections{
 		job: &domain.MessageCollectionJob{ID: 10, UserID: 1, GroupID: 7, Status: domain.JobStatusCompleted},
 		messages: []domain.CollectedMessage{
-			{ID: 1001, JobID: 10, UserID: 1, ChatID: 5, MessageID: 101, Date: time.Now(), Text: "Go team published a detailed compiler performance update https://example.com/go"},
-			{ID: 1002, JobID: 10, UserID: 1, ChatID: 5, MessageID: 102, Date: time.Now(), Text: "Repost https://example.com/go"},
+			{ID: 1001, JobID: 10, UserID: 1, ChatID: 5, MessageID: int64(101) << 20, Date: time.Now(), Text: "Go team published a detailed compiler performance update https://example.com/go"},
+			{ID: 1002, JobID: 10, UserID: 1, ChatID: 5, MessageID: int64(102) << 20, Date: time.Now(), Text: "Repost https://example.com/go"},
 		},
 	}
 	summaries := &fakeSummaries{}
@@ -77,8 +77,8 @@ func TestGenerateFromCollectionPersistsSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("position Find() error = %v", err)
 	}
-	if position == nil || position.LastSummarizedMessageID != 102 {
-		t.Fatalf("position = %+v, want message 102", position)
+	if position == nil || position.LastSummarizedMessageID != int64(102)<<20 {
+		t.Fatalf("position = %+v, want raw TDLib message ID", position)
 	}
 	if readMarker.telegramUserID != 42 || len(readMarker.messages) != 2 {
 		t.Fatalf("read marker telegramUserID=%d messages=%+v", readMarker.telegramUserID, readMarker.messages)
