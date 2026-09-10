@@ -166,6 +166,13 @@ type fakeClient struct {
 	archiveChats []domain.TelegramChat
 	folderChats  map[int32][]domain.TelegramChat
 	readMessages map[int64][]int64
+	publicChat   domain.TelegramChat
+	publicLookup string
+}
+
+func (c *fakeClient) ResolvePublicChat(_ context.Context, username string) (domain.TelegramChat, error) {
+	c.publicLookup = username
+	return c.publicChat, nil
 }
 
 func (c *fakeClient) Start(context.Context) error {

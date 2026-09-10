@@ -76,11 +76,33 @@ func TestTelegramChatsHandler(t *testing.T) {
 	}
 }
 
+func TestTelegramPublicChannelAddHandler(t *testing.T) {
+	sync := &fakeHTTPSync{publicChat: &domain.TelegramChat{ID: 8, TelegramChatID: -1008, Title: "Open", Type: domain.ChatTypeChannel}}
+	server := NewWithControllers(":0", nil, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), nil, sync)
+	req := httptest.NewRequest(http.MethodPost, "/telegram/public-channels", bytes.NewBufferString(`{"telegram_user_id":42,"group_id":7,"reference":"@open"}`))
+	rec := httptest.NewRecorder()
+
+	server.httpServer.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || sync.publicGroupID != 7 || sync.publicReference != "@open" {
+		t.Fatalf("status=%d body=%s group=%d reference=%q", rec.Code, rec.Body.String(), sync.publicGroupID, sync.publicReference)
+	}
+}
+
 type fakeHTTPSync struct {
-	synced  bool
-	result  *tdlib.SyncResult
-	folders []domain.TelegramFolder
-	chats   []domain.TelegramChat
+	synced          bool
+	result          *tdlib.SyncResult
+	folders         []domain.TelegramFolder
+	chats           []domain.TelegramChat
+	publicChat      *domain.TelegramChat
+	publicGroupID   int64
+	publicReference string
+}
+
+func (f *fakeHTTPSync) AddPublicChannel(_ context.Context, _ int64, groupID int64, reference string) (*domain.TelegramChat, error) {
+	f.publicGroupID = groupID
+	f.publicReference = reference
+	return f.publicChat, nil
 }
 
 func (f *fakeHTTPSync) Sync(context.Context, int64) (*tdlib.SyncResult, error) {

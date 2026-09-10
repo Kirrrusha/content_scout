@@ -85,6 +85,15 @@ func (r *Router) handleNewSummaryCallback(ctx context.Context, in Incoming) (Out
 			EditMessageID:  in.CallbackMessage,
 			AnswerCallback: "Период сбора.",
 		}, nil
+	case "addpublic":
+		if len(fields) != 3 {
+			return unknownCallback(in), nil
+		}
+		groupID, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil || groupID <= 0 {
+			return Outgoing{ChatID: in.ChatID, Text: "Неизвестная группа.", AnswerCallback: "Неизвестная группа."}, nil
+		}
+		return r.promptPublicChannel(ctx, in.ChatID, in.UserID, groupID, "newsum", in.CallbackMessage, "Введите адрес канала.")
 	case "mode":
 		if len(fields) != 4 {
 			return unknownCallback(in), nil
@@ -153,6 +162,7 @@ func newSummaryModeMenu(groupID int64) Menu {
 		{{Text: "Новые (непрочитанные)", Data: fmt.Sprintf("newsum:mode:%d:%s", groupID, domain.CollectionModeNewOnly)}},
 		{{Text: "24 часа", Data: fmt.Sprintf("newsum:mode:%d:%s", groupID, domain.CollectionModeLast24H)}, {Text: "3 дня", Data: fmt.Sprintf("newsum:mode:%d:%s", groupID, domain.CollectionModeLast3D)}},
 		{{Text: "Неделя", Data: fmt.Sprintf("newsum:mode:%d:%s", groupID, domain.CollectionModeWeek)}},
+		{{Text: "Добавить открытый канал", Data: fmt.Sprintf("newsum:addpublic:%d", groupID)}},
 		{{Text: "Назад", Data: ActionNewSummary}},
 	}
 }

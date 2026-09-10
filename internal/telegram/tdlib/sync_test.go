@@ -119,6 +119,53 @@ func TestSyncServiceRequiresReadySession(t *testing.T) {
 	}
 }
 
+func TestSyncServiceAddsUnsubscribedPublicChannelToGroup(t *testing.T) {
+	ctx := context.Background()
+	users := newMemoryUserRepo()
+	sessions := newMemorySessionRepo()
+	user, _ := users.UpsertByTelegramID(ctx, 42)
+	_, _ = sessions.Upsert(ctx, domain.TelegramSession{UserID: user.ID, StoragePath: "/tmp/tdlib", Status: domain.SessionStatusConnected})
+	chats := newMemoryChatRepo()
+	groups := newMemorySourceGroupRepo()
+	group, _ := groups.Create(ctx, domain.SourceGroup{UserID: user.ID, Name: "AI"})
+	username := "open_channel"
+	client := &fakeClient{state: AuthorizationStateReady, publicChat: domain.TelegramChat{
+		TelegramChatID: -100123, Title: "Open Channel", Type: domain.ChatTypeChannel,
+	}}
+	service := NewSyncService(42, users, sessions, newMemoryFolderRepo(), chats, groups, fakeFactory{client: client})
+
+	added, err := service.AddPublicChannel(ctx, 42, group.ID, "https://t.me/Open_Channel?start=1")
+	if err != nil {
+		t.Fatalf("AddPublicChannel() error = %v", err)
+	}
+	if client.publicLookup != username || added.ID == 0 || added.Username == nil || *added.Username != username {
+		t.Fatalf("added = %+v lookup=%q", added, client.publicLookup)
+	}
+	links, _ := groups.ListChats(ctx, group.ID)
+	if len(links) != 1 || links[0].ChatID != added.ID || !links[0].Enabled {
+		t.Fatalf("links = %+v", links)
+	}
+}
+
+func TestNormalizePublicChannelReference(t *testing.T) {
+	for input, want := range map[string]string{
+		"@Some_Channel":               "some_channel",
+		"https://t.me/Some_Channel/":  "some_channel",
+		"https://t.me/s/Some_Channel": "some_channel",
+		"telegram.me/news123":         "news123",
+	} {
+		got, err := normalizePublicChannelReference(input)
+		if err != nil || got != want {
+			t.Errorf("normalizePublicChannelReference(%q) = %q, %v; want %q", input, got, err, want)
+		}
+	}
+	for _, input := range []string{"", "abc", "t.me/not-valid!"} {
+		if _, err := normalizePublicChannelReference(input); err == nil {
+			t.Errorf("normalizePublicChannelReference(%q) error = nil", input)
+		}
+	}
+}
+
 type memoryFolderRepo struct {
 	folders []domain.TelegramFolder
 }

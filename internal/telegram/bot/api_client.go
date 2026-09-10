@@ -136,6 +136,28 @@ func (c *APIClient) ListChats(ctx context.Context, telegramUserID int64) ([]doma
 	return chats, nil
 }
 
+func (c *APIClient) AddPublicChannel(ctx context.Context, telegramUserID, groupID int64, reference string) (*domain.TelegramChat, error) {
+	var response chatAPIResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/telegram/public-channels", publicChannelAPIRequest{
+		TelegramUserID: telegramUserID,
+		GroupID:        groupID,
+		Reference:      reference,
+	}, &response); err != nil {
+		return nil, err
+	}
+	return &domain.TelegramChat{
+		ID:             response.ID,
+		TelegramChatID: response.TelegramChatID,
+		Title:          response.Title,
+		Username:       response.Username,
+		Type:           domain.ChatType(response.Type),
+		IsArchived:     response.IsArchived,
+		IsMuted:        response.IsMuted,
+		UnreadCount:    response.UnreadCount,
+		LastMessageID:  response.LastMessageID,
+	}, nil
+}
+
 func (c *APIClient) CollectGroup(ctx context.Context, req collection.Request) (*collection.Result, error) {
 	var response collectionAPIResponse
 	path := fmt.Sprintf("/collections/group/%d", req.GroupID)
@@ -325,6 +347,12 @@ type collectionAPIRequest struct {
 	TelegramUserID int64  `json:"telegram_user_id"`
 	Mode           string `json:"mode"`
 	Limit          int    `json:"limit"`
+}
+
+type publicChannelAPIRequest struct {
+	TelegramUserID int64  `json:"telegram_user_id"`
+	GroupID        int64  `json:"group_id"`
+	Reference      string `json:"reference"`
 }
 
 type collectionAPIResponse struct {

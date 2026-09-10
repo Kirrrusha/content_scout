@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -33,6 +34,12 @@ type chatResponse struct {
 	IsMuted        bool    `json:"is_muted"`
 	UnreadCount    int     `json:"unread_count"`
 	LastMessageID  int64   `json:"last_message_id"`
+}
+
+type publicChannelRequest struct {
+	TelegramUserID int64  `json:"telegram_user_id"`
+	GroupID        int64  `json:"group_id"`
+	Reference      string `json:"reference"`
 }
 
 func (s *Server) telegramSync(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +89,40 @@ func (s *Server) telegramChats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, chatResponses(chats))
+}
+
+func (s *Server) telegramPublicChannelAdd(w http.ResponseWriter, r *http.Request) {
+	controller, ok := s.sync.(PublicChannelController)
+	if !ok {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "public channel lookup is not configured"})
+		return
+	}
+	var req publicChannelRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.TelegramUserID == 0 || req.GroupID <= 0 || req.Reference == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "telegram_user_id, group_id and reference are required"})
+		return
+	}
+	chat, err := controller.AddPublicChannel(r.Context(), req.TelegramUserID, req.GroupID, req.Reference)
+	if err != nil {
+		switch {
+		case errors.Is(err, tdlib.ErrInvalidPublicChannel), errors.Is(err, tdlib.ErrPublicChannelOnly):
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		case errors.Is(err, tdlib.ErrSourceGroupNotFound):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		default:
+			s.writeAuthError(w, err)
+		}
+		return
+	}
+	if chat == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "public channel lookup returned no channel"})
+		return
+	}
+	responses := chatResponses([]domain.TelegramChat{*chat})
+	writeJSON(w, http.StatusOK, responses[0])
 }
 
 func (s *Server) requireSyncController(w http.ResponseWriter) bool {

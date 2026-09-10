@@ -1130,6 +1130,33 @@ func TestRouterScheduleButtonFlow(t *testing.T) {
 	}
 }
 
+func TestRouterAddsPublicChannelWhileCreatingSummary(t *testing.T) {
+	ctx := context.Background()
+	states := NewMemoryStateStore()
+	sync := &fakeSyncController{publicChat: &domain.TelegramChat{ID: 88, Title: "Открытый канал", Type: domain.ChatTypeChannel}}
+	groups := &fakeGroupController{groups: []domain.SourceGroup{{ID: 7, Name: "AI"}}}
+	router := NewRouterWithAllControllers(42, states, nil, sync, groups)
+
+	out, err := router.Handle(ctx, Incoming{Kind: IncomingCallback, UserID: 42, ChatID: 100, CallbackData: "newsum:addpublic:7", CallbackMessage: 5})
+	if err != nil {
+		t.Fatalf("Handle(add public callback) error = %v", err)
+	}
+	if !strings.Contains(out.Text, "@username") {
+		t.Fatalf("prompt = %q", out.Text)
+	}
+
+	out, err = router.Handle(ctx, Incoming{UserID: 42, ChatID: 100, Text: "https://t.me/open_channel"})
+	if err != nil {
+		t.Fatalf("Handle(public channel input) error = %v", err)
+	}
+	if sync.publicGroupID != 7 || sync.publicReference != "https://t.me/open_channel" {
+		t.Fatalf("group=%d reference=%q", sync.publicGroupID, sync.publicReference)
+	}
+	if !strings.Contains(out.Text, "Открытый канал") || out.Menu[0][0].Data != "newsum:mode:7:new" {
+		t.Fatalf("output=%q menu=%+v", out.Text, out.Menu)
+	}
+}
+
 type fakeAuthController struct {
 	started     bool
 	deleted     bool
@@ -1171,10 +1198,22 @@ func (f *fakeAuthController) DeleteSession(context.Context, int64) error {
 }
 
 type fakeSyncController struct {
-	synced  bool
-	result  *tdlib.SyncResult
-	folders []domain.TelegramFolder
-	chats   []domain.TelegramChat
+	synced          bool
+	result          *tdlib.SyncResult
+	folders         []domain.TelegramFolder
+	chats           []domain.TelegramChat
+	publicChat      *domain.TelegramChat
+	publicGroupID   int64
+	publicReference string
+}
+
+func (f *fakeSyncController) AddPublicChannel(_ context.Context, _ int64, groupID int64, reference string) (*domain.TelegramChat, error) {
+	f.publicGroupID = groupID
+	f.publicReference = reference
+	if f.publicChat != nil {
+		return f.publicChat, nil
+	}
+	return &domain.TelegramChat{ID: 88, Title: "Открытый канал", Type: domain.ChatTypeChannel}, nil
 }
 
 func (f *fakeSyncController) Sync(context.Context, int64) (*tdlib.SyncResult, error) {

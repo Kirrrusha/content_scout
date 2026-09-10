@@ -18,6 +18,12 @@ type SyncResult struct {
 	SyncedAt     time.Time
 }
 
+var (
+	ErrInvalidPublicChannel = errors.New("invalid public channel reference")
+	ErrPublicChannelOnly    = errors.New("telegram chat is not a public channel")
+	ErrSourceGroupNotFound  = errors.New("source group not found")
+)
+
 type SyncService struct {
 	ownerTelegramID int64
 	users           storage.UserRepository
@@ -176,6 +182,90 @@ func (s *SyncService) ListChats(ctx context.Context, telegramUserID int64) ([]do
 		return nil, nil
 	}
 	return s.chats.ListByUserID(ctx, user.ID)
+}
+
+// AddPublicChannel resolves a public channel without subscribing to it, stores
+// it in the local chat catalog, and attaches it to an existing source group.
+func (s *SyncService) AddPublicChannel(ctx context.Context, telegramUserID, groupID int64, reference string) (*domain.TelegramChat, error) {
+	username, err := normalizePublicChannelReference(reference)
+	if err != nil {
+		return nil, err
+	}
+	user, _, client, err := s.readyClient(ctx, telegramUserID)
+	if err != nil {
+		return nil, err
+	}
+	if s.groups == nil {
+		return nil, errors.New("source groups are not configured")
+	}
+	groups, err := s.groups.ListByUserID(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list source groups: %w", err)
+	}
+	foundGroup := false
+	for _, group := range groups {
+		if group.ID == groupID {
+			foundGroup = true
+			break
+		}
+	}
+	if !foundGroup {
+		return nil, ErrSourceGroupNotFound
+	}
+	resolver, ok := client.(PublicChatResolver)
+	if !ok {
+		return nil, errors.New("public channel lookup is not supported")
+	}
+	chat, err := resolver.ResolvePublicChat(ctx, username)
+	if err != nil {
+		return nil, fmt.Errorf("resolve public channel: %w", err)
+	}
+	if chat.Type != domain.ChatTypeChannel || chat.TelegramChatID == 0 {
+		return nil, ErrPublicChannelOnly
+	}
+	chat.UserID = user.ID
+	chat.Username = &username
+	if err := s.chats.UpsertMany(ctx, []domain.TelegramChat{chat}); err != nil {
+		return nil, fmt.Errorf("persist public channel: %w", err)
+	}
+	saved, err := s.chats.FindByTelegramChatID(ctx, user.ID, chat.TelegramChatID)
+	if err != nil {
+		return nil, fmt.Errorf("find persisted public channel: %w", err)
+	}
+	if saved == nil {
+		return nil, errors.New("persisted public channel was not found")
+	}
+	if err := s.groups.AddChat(ctx, domain.SourceGroupChat{GroupID: groupID, ChatID: saved.ID, Enabled: true}); err != nil {
+		return nil, fmt.Errorf("add public channel to source group: %w", err)
+	}
+	return saved, nil
+}
+
+func normalizePublicChannelReference(reference string) (string, error) {
+	value := strings.TrimSpace(reference)
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+	value = strings.TrimPrefix(value, "www.")
+	value = strings.TrimPrefix(value, "telegram.me/")
+	value = strings.TrimPrefix(value, "t.me/")
+	value = strings.TrimPrefix(value, "s/")
+	value = strings.TrimPrefix(value, "@")
+	value = strings.Trim(value, "/")
+	if cut, _, ok := strings.Cut(value, "?"); ok {
+		value = cut
+	}
+	if cut, _, ok := strings.Cut(value, "/"); ok {
+		value = cut
+	}
+	if len(value) < 5 || len(value) > 32 {
+		return "", ErrInvalidPublicChannel
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '_' {
+			return "", ErrInvalidPublicChannel
+		}
+	}
+	return strings.ToLower(value), nil
 }
 
 func (s *SyncService) readyClient(ctx context.Context, telegramUserID int64) (*domain.User, *domain.TelegramSession, TelegramClient, error) {

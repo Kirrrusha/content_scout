@@ -78,6 +78,7 @@ func groupsMenu(groups []domain.SourceGroup) Menu {
 func groupDetailsMenu(groupID int64) Menu {
 	return Menu{
 		{{Text: "Создать сводку", Data: fmt.Sprintf("newsum:group:%d", groupID)}},
+		{{Text: "Добавить открытый канал", Data: fmt.Sprintf("groups:addpublic:%d", groupID)}},
 		{{Text: "Все группы", Data: ActionGroups}, {Text: "Назад", Data: ActionBackHome}},
 	}
 }

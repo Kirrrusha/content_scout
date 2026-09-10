@@ -127,6 +127,7 @@ Authorization: Bearer <token>
 | `/group_delete <id>` | Удалить группу источников. |
 | `/group_chats <id>` | Показать чаты, привязанные к группе источников. |
 | `/group_add_chat <group_id> <chat_id> [priority]` | Добавить Telegram-чат в группу источников. |
+| `/group_add_public <group_id> <@username или ссылка t.me>` | Добавить открытый канал без подписки на него. |
 | `/group_remove_chat <group_id> <chat_id>` | Удалить чат из группы источников. |
 | `/collect_group <group_id> [new\|24h\|3d\|week\|latest_n] [limit]` | Собрать сообщения из всех включённых чатов группы. |
 | `/summarize_collection <collection_job_id> [short\|standard\|detailed]` | Сгенерировать summary из collection job. |
@@ -188,6 +189,7 @@ POST   /telegram/sync
 POST   /telegram/messages/read
 GET    /telegram/folders?telegram_user_id=...
 GET    /telegram/chats?telegram_user_id=...
+POST   /telegram/public-channels
 ```
 
 `POST /telegram/sync` принимает `{"telegram_user_id": ...}`. Личные чаты по умолчанию не сохраняются. Ответы с кэшированными чатами содержат название, тип, unread count, mute/archive flags и last message id.

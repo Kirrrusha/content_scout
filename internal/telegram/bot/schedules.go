@@ -154,7 +154,16 @@ func (r *Router) handleScheduleCallback(ctx context.Context, in Incoming) (Outgo
 		if !ok {
 			return Outgoing{ChatID: in.ChatID, Text: "Неизвестная группа.", AnswerCallback: "Неизвестная группа."}, nil
 		}
-		return Outgoing{ChatID: in.ChatID, Text: "Сколько сводок создавать в день?", Menu: scheduleCountMenu(groupID), EditMessageID: in.CallbackMessage, AnswerCallback: "Группа выбрана."}, nil
+		return Outgoing{ChatID: in.ChatID, Text: "Сколько сводок создавать в день? При необходимости сначала добавьте открытый канал.", Menu: scheduleCountMenu(groupID), EditMessageID: in.CallbackMessage, AnswerCallback: "Группа выбрана."}, nil
+	case "addpublic":
+		if len(fields) != 3 {
+			return unknownCallback(in), nil
+		}
+		groupID, ok := parseCallbackID(fields[2])
+		if !ok {
+			return Outgoing{ChatID: in.ChatID, Text: "Неизвестная группа.", AnswerCallback: "Неизвестная группа."}, nil
+		}
+		return r.promptPublicChannel(ctx, in.ChatID, in.UserID, groupID, "schedule", in.CallbackMessage, "Введите адрес канала.")
 	case "count":
 		if len(fields) != 4 {
 			return unknownCallback(in), nil
@@ -393,6 +402,7 @@ func scheduleGroupsMenu(groups []domain.SourceGroup) Menu {
 func scheduleCountMenu(groupID int64) Menu {
 	return Menu{
 		{{Text: "1 раз", Data: fmt.Sprintf("sched:count:%d:1", groupID)}, {Text: "2 раза", Data: fmt.Sprintf("sched:count:%d:2", groupID)}, {Text: "3 раза", Data: fmt.Sprintf("sched:count:%d:3", groupID)}},
+		{{Text: "Добавить открытый канал", Data: fmt.Sprintf("sched:addpublic:%d", groupID)}},
 		{{Text: "Назад", Data: ActionScheduleNew}},
 	}
 }

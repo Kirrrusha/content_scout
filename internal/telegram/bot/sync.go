@@ -18,6 +18,10 @@ type SyncController interface {
 	ListChats(ctx context.Context, telegramUserID int64) ([]domain.TelegramChat, error)
 }
 
+type PublicChannelController interface {
+	AddPublicChannel(ctx context.Context, telegramUserID, groupID int64, reference string) (*domain.TelegramChat, error)
+}
+
 func syncResultText(result *tdlib.SyncResult) string {
 	if result == nil {
 		return "Синхронизация не выполнена."

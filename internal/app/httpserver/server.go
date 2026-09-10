@@ -77,6 +77,10 @@ type SyncController interface {
 	ListChats(ctx context.Context, telegramUserID int64) ([]domain.TelegramChat, error)
 }
 
+type PublicChannelController interface {
+	AddPublicChannel(ctx context.Context, telegramUserID, groupID int64, reference string) (*domain.TelegramChat, error)
+}
+
 type GroupController interface {
 	Create(ctx context.Context, telegramUserID int64, name, description string) (*domain.SourceGroup, error)
 	Update(ctx context.Context, telegramUserID, groupID int64, name, description string) (*domain.SourceGroup, error)
@@ -195,6 +199,7 @@ func NewWithOptions(addr string, db *sql.DB, logger *slog.Logger, options Option
 	mux.HandleFunc("POST /telegram/messages/read", server.telegramMessagesRead)
 	mux.HandleFunc("GET /telegram/folders", server.telegramFolders)
 	mux.HandleFunc("GET /telegram/chats", server.telegramChats)
+	mux.HandleFunc("POST /telegram/public-channels", server.telegramPublicChannelAdd)
 	mux.HandleFunc("GET /groups", server.groupsList)
 	mux.HandleFunc("POST /groups", server.groupsCreate)
 	mux.HandleFunc("PATCH /groups/{id}", server.groupsUpdate)

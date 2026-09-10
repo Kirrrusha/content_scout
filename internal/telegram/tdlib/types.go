@@ -42,6 +42,12 @@ type TelegramClient interface {
 	MarkMessagesRead(ctx context.Context, chatID int64, messageIDs []int64) error
 }
 
+// PublicChatResolver is implemented by TDLib clients that can resolve a public
+// @username without joining or subscribing to the chat.
+type PublicChatResolver interface {
+	ResolvePublicChat(ctx context.Context, username string) (domain.TelegramChat, error)
+}
+
 type ClientFactory interface {
 	NewClient(sessionPath string) (TelegramClient, error)
 }

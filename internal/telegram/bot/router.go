@@ -136,6 +136,8 @@ func (r *Router) handleMessage(ctx context.Context, in Incoming) (Outgoing, erro
 		return r.deleteGroup(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_delete")))
 	case "group_add_chat":
 		return r.addGroupChat(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_add_chat")))
+	case "group_add_public":
+		return r.addPublicChannelCommand(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_add_public")))
 	case "group_remove_chat":
 		return r.removeGroupChat(ctx, in.ChatID, in.UserID, strings.TrimSpace(strings.TrimPrefix(in.Text, "/group_remove_chat")))
 	case "group_chats":
@@ -388,6 +390,9 @@ func (r *Router) handleDialogInput(ctx context.Context, in Incoming) (Outgoing, 
 		return out, true, err
 	case ViewAuthPassword:
 		out, err := r.submitPassword(ctx, in.ChatID, in.UserID, text)
+		return out, true, err
+	case ViewAddPublicChannel:
+		out, err := r.addPublicChannelFromDialog(ctx, in.ChatID, in.UserID, state, text)
 		return out, true, err
 	default:
 		return Outgoing{}, false, nil
@@ -655,6 +660,15 @@ func (r *Router) handleGroupsCallback(ctx context.Context, in Incoming) (Outgoin
 			return Outgoing{ChatID: in.ChatID, Text: "Неизвестная группа.", AnswerCallback: "Неизвестная группа."}, nil
 		}
 		return r.showGroupChats(ctx, in.ChatID, in.UserID, strconv.FormatInt(groupID, 10), in.CallbackMessage, "Группа открыта.")
+	case "addpublic":
+		if len(fields) != 3 {
+			return unknownCallback(in), nil
+		}
+		groupID, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil || groupID <= 0 {
+			return Outgoing{ChatID: in.ChatID, Text: "Неизвестная группа.", AnswerCallback: "Неизвестная группа."}, nil
+		}
+		return r.promptPublicChannel(ctx, in.ChatID, in.UserID, groupID, "groups", in.CallbackMessage, "Введите адрес канала.")
 	case "sync":
 		return r.syncTelegram(ctx, in.ChatID, in.UserID, in.CallbackMessage, "Синхронизирую.")
 	default:

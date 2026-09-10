@@ -8,22 +8,25 @@ import (
 type DialogView string
 
 const (
-	ViewStart           DialogView = "start"
-	ViewNewSummary      DialogView = "new_summary"
-	ViewFolders         DialogView = "folders"
-	ViewGroups          DialogView = "groups"
-	ViewSelectedSources DialogView = "selected_sources"
-	ViewHistory         DialogView = "history"
-	ViewArticles        DialogView = "articles"
-	ViewSchedules       DialogView = "schedules"
-	ViewSettings        DialogView = "settings"
-	ViewAuthPhone       DialogView = "auth_phone"
-	ViewAuthCode        DialogView = "auth_code"
-	ViewAuthPassword    DialogView = "auth_password"
+	ViewStart            DialogView = "start"
+	ViewNewSummary       DialogView = "new_summary"
+	ViewFolders          DialogView = "folders"
+	ViewGroups           DialogView = "groups"
+	ViewSelectedSources  DialogView = "selected_sources"
+	ViewHistory          DialogView = "history"
+	ViewArticles         DialogView = "articles"
+	ViewSchedules        DialogView = "schedules"
+	ViewSettings         DialogView = "settings"
+	ViewAuthPhone        DialogView = "auth_phone"
+	ViewAuthCode         DialogView = "auth_code"
+	ViewAuthPassword     DialogView = "auth_password"
+	ViewAddPublicChannel DialogView = "add_public_channel"
 )
 
 type DialogState struct {
-	View DialogView
+	View         DialogView
+	GroupID      int64
+	ReturnAction string
 }
 
 type StateStore interface {

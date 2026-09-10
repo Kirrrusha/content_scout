@@ -148,6 +148,22 @@ func (c *NativeClient) ListFolderChats(ctx context.Context, folderID int32) ([]d
 	return c.listChatsLocked(ctx, tdlibFolderChatList(folderID), false)
 }
 
+func (c *NativeClient) ResolvePublicChat(ctx context.Context, username string) (domain.TelegramChat, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	response, err := c.sendAndWait(ctx, map[string]any{
+		"@type":    "searchPublicChat",
+		"username": username,
+	})
+	if err != nil {
+		return domain.TelegramChat{}, err
+	}
+	chat := mapChat(response, false)
+	chat.Username = &username
+	return chat, nil
+}
+
 func (c *NativeClient) listChatsLocked(ctx context.Context, chatList map[string]any, archived bool) ([]domain.TelegramChat, error) {
 	if err := c.loadChats(ctx, chatList); err != nil {
 		return nil, err
