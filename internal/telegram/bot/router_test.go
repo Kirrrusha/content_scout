@@ -51,12 +51,36 @@ func TestRouterStartShowsMainMenu(t *testing.T) {
 }
 
 func TestTelegramTextFitsTelegramMessageLimit(t *testing.T) {
-	got := telegramText(strings.Repeat("a", 5000))
+	got := telegramText(strings.Repeat("a", 5000), "")
 	if len([]rune(got)) > 4096 {
 		t.Fatalf("telegramText length = %d", len([]rune(got)))
 	}
 	if !strings.Contains(got, "Текст сокращен") {
 		t.Fatalf("telegramText() = %q", got)
+	}
+}
+
+func TestTelegramTextClosesHTMLTagCutByLimit(t *testing.T) {
+	text := strings.Repeat("a", 3860) + `<a href="https://example.com">` + strings.Repeat("b", 100) + `</a>`
+	got := telegramText(text, "HTML")
+
+	if strings.Count(got, `<a href=`) != 1 || strings.Count(got, `</a>`) != 1 {
+		t.Fatalf("telegramText() left unbalanced link: %q", got[len(got)-180:])
+	}
+	if len([]rune(got)) > 4096 {
+		t.Fatalf("telegramText length = %d", len([]rune(got)))
+	}
+	if !strings.Contains(got, "Текст сокращен") {
+		t.Fatalf("telegramText() = %q", got)
+	}
+}
+
+func TestTelegramTextRemovesTagFragmentCutByLimit(t *testing.T) {
+	text := strings.Repeat("a", 3890) + `<a href="https://example.com">source</a>` + strings.Repeat("b", 100)
+	got := telegramText(text, "HTML")
+
+	if strings.Contains(got, `<a href`) || strings.Contains(got, `</a>`) {
+		t.Fatalf("telegramText() kept a partial link: %q", got[len(got)-180:])
 	}
 }
 

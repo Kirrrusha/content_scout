@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -300,7 +301,7 @@ func summaryProgressMenu() Menu {
 }
 
 func (s *Service) Send(_ context.Context, out Outgoing) error {
-	out.Text = telegramText(out.Text)
+	out.Text = telegramText(out.Text, out.ParseMode)
 	s.logOutgoing(out)
 	if out.CallbackID != "" {
 		callback := tgbotapi.NewCallback(out.CallbackID, out.AnswerCallback)
@@ -391,7 +392,7 @@ func (s *Service) logOutgoing(out Outgoing) {
 	)
 }
 
-func telegramText(text string) string {
+func telegramText(text, parseMode string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return "Готово."
@@ -401,7 +402,40 @@ func telegramText(text string) string {
 	if len(runes) <= limit {
 		return text
 	}
-	return string(runes[:limit]) + "\n\nТекст сокращен. Полную версию можно открыть по темам или экспортировать."
+	prefix := string(runes[:limit])
+	if strings.EqualFold(parseMode, "HTML") {
+		prefix = closeTruncatedTelegramHTML(prefix)
+	}
+	return prefix + "\n\nТекст сокращен. Полную версию можно открыть по темам или экспортировать."
+}
+
+var telegramHTMLTag = regexp.MustCompile(`(?i)<(/?)(a|b|i|s|code)(?:\s[^>]*)?>`)
+
+func closeTruncatedTelegramHTML(text string) string {
+	// A rune limit can land in the middle of a tag or entity. Remove that
+	// incomplete fragment before balancing tags that were opened earlier.
+	if open := strings.LastIndex(text, "<"); open > strings.LastIndex(text, ">") {
+		text = text[:open]
+	}
+	if entity := strings.LastIndex(text, "&"); entity > strings.LastIndex(text, ";") {
+		text = text[:entity]
+	}
+
+	stack := make([]string, 0, 4)
+	for _, match := range telegramHTMLTag.FindAllStringSubmatch(text, -1) {
+		tag := strings.ToLower(match[2])
+		if match[1] == "" {
+			stack = append(stack, tag)
+			continue
+		}
+		if len(stack) > 0 && stack[len(stack)-1] == tag {
+			stack = stack[:len(stack)-1]
+		}
+	}
+	for i := len(stack) - 1; i >= 0; i-- {
+		text += "</" + stack[i] + ">"
+	}
+	return text
 }
 
 func commandFromText(text string) string {
