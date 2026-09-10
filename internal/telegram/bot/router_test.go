@@ -1007,6 +1007,20 @@ func TestRouterExportArticleCallbackSendsDocument(t *testing.T) {
 	}
 }
 
+func TestScheduleListTextShowsGroupCountsAndTimes(t *testing.T) {
+	got := scheduleListText([]domain.SummarySchedule{
+		{ID: 1, GroupID: 7, Cron: "09:00", Enabled: true},
+		{ID: 2, GroupID: 7, Cron: "18:00", Enabled: false},
+		{ID: 3, GroupID: 8, Cron: "12:00", Enabled: true},
+	}, map[int64]string{7: "AI", 8: "Новости"})
+
+	for _, want := range []string{"Расписаний: 3", "AI — расписаний в день: 2", "#1 · 09:00 · включено", "#2 · 18:00 · выключено", "Новости — расписаний в день: 1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("scheduleListText() = %q, want fragment %q", got, want)
+		}
+	}
+}
+
 func TestRouterScheduleButtonFlow(t *testing.T) {
 	ctx := context.Background()
 	groups := &fakeGroupController{
@@ -1039,17 +1053,14 @@ func TestRouterScheduleButtonFlow(t *testing.T) {
 		UserID:          42,
 		ChatID:          100,
 		CallbackID:      "callback-2",
-		CallbackData:    "sched:create:7:0900",
+		CallbackData:    "sched:group:7",
 		CallbackMessage: 5,
 	})
 	if err != nil {
-		t.Fatalf("Handle(schedule create) error = %v", err)
+		t.Fatalf("Handle(schedule group) error = %v", err)
 	}
-	if schedule.createRequest.GroupID != 7 || schedule.createRequest.Time != "09:00" || schedule.createRequest.Timezone != "Europe/Moscow" {
-		t.Fatalf("create request = %+v", schedule.createRequest)
-	}
-	if !strings.Contains(out.Text, "Расписание создано") || out.Menu[0][0].Data != "sched:run:3" {
-		t.Fatalf("output = %q menu=%+v", out.Text, out.Menu)
+	if out.Menu[0][1].Data != "sched:count:7:2" {
+		t.Fatalf("count menu = %+v", out.Menu)
 	}
 
 	out, err = router.Handle(ctx, Incoming{
@@ -1057,6 +1068,57 @@ func TestRouterScheduleButtonFlow(t *testing.T) {
 		UserID:          42,
 		ChatID:          100,
 		CallbackID:      "callback-3",
+		CallbackData:    "sched:count:7:2",
+		CallbackMessage: 5,
+	})
+	if err != nil {
+		t.Fatalf("Handle(schedule count) error = %v", err)
+	}
+	if out.Menu[0][1].Data != "sched:time:7:2:0900" {
+		t.Fatalf("time menu = %+v", out.Menu)
+	}
+
+	out, err = router.Handle(ctx, Incoming{
+		Kind:            IncomingCallback,
+		UserID:          42,
+		ChatID:          100,
+		CallbackID:      "callback-4",
+		CallbackData:    "sched:time:7:2:0900",
+		CallbackMessage: 5,
+	})
+	if err != nil {
+		t.Fatalf("Handle(first schedule time) error = %v", err)
+	}
+	if !strings.Contains(out.Text, "Выбрано: 09:00") || out.Menu[1][0].Data != "sched:time:7:2:0900,1800" {
+		t.Fatalf("second time menu output=%q menu=%+v", out.Text, out.Menu)
+	}
+
+	out, err = router.Handle(ctx, Incoming{
+		Kind:            IncomingCallback,
+		UserID:          42,
+		ChatID:          100,
+		CallbackID:      "callback-5",
+		CallbackData:    "sched:time:7:2:0900,1800",
+		CallbackMessage: 5,
+	})
+	if err != nil {
+		t.Fatalf("Handle(schedule create) error = %v", err)
+	}
+	if len(schedule.createRequests) != 2 || schedule.createRequests[0].Time != "09:00" || schedule.createRequests[1].Time != "18:00" {
+		t.Fatalf("create requests = %+v", schedule.createRequests)
+	}
+	if schedule.createRequests[0].GroupID != 7 || schedule.createRequests[0].Timezone != "Europe/Moscow" {
+		t.Fatalf("create request = %+v", schedule.createRequests[0])
+	}
+	if !strings.Contains(out.Text, "Создано расписаний: 2") {
+		t.Fatalf("output = %q menu=%+v", out.Text, out.Menu)
+	}
+
+	out, err = router.Handle(ctx, Incoming{
+		Kind:            IncomingCallback,
+		UserID:          42,
+		ChatID:          100,
+		CallbackID:      "callback-6",
 		CallbackData:    "sched:run:3",
 		CallbackMessage: 5,
 	})
@@ -1233,15 +1295,16 @@ func (f *fakeSummaryBrowserController) TopicCard(_ context.Context, _ int64, sum
 }
 
 type fakeScheduleController struct {
-	items         []domain.SummarySchedule
-	created       *domain.SummarySchedule
-	updated       *domain.SummarySchedule
-	job           *domain.Job
-	createRequest schedules.Request
-	runID         int64
-	enabledID     int64
-	enabled       bool
-	deletedID     int64
+	items          []domain.SummarySchedule
+	created        *domain.SummarySchedule
+	updated        *domain.SummarySchedule
+	job            *domain.Job
+	createRequest  schedules.Request
+	createRequests []schedules.Request
+	runID          int64
+	enabledID      int64
+	enabled        bool
+	deletedID      int64
 }
 
 func (f *fakeScheduleController) List(context.Context, int64) ([]domain.SummarySchedule, error) {
@@ -1262,6 +1325,7 @@ func (f *fakeScheduleController) Get(_ context.Context, _ int64, scheduleID int6
 
 func (f *fakeScheduleController) Create(_ context.Context, req schedules.Request) (*domain.SummarySchedule, error) {
 	f.createRequest = req
+	f.createRequests = append(f.createRequests, req)
 	if f.created != nil {
 		return f.created, nil
 	}

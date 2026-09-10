@@ -23,13 +23,15 @@ func (r *Router) showSchedules(ctx context.Context, chatID, userID int64, editMe
 	text := "Расписания не настроены."
 	menu := scheduleListMenu(nil)
 	if len(items) > 0 {
-		var b strings.Builder
-		b.WriteString("Расписания:\n")
-		for _, item := range items {
-			b.WriteString(scheduleLine(item))
-			b.WriteByte('\n')
+		groupNames := make(map[int64]string)
+		if r.groups != nil {
+			if groups, groupErr := r.groups.List(ctx, userID); groupErr == nil {
+				for _, group := range groups {
+					groupNames[group.ID] = group.Name
+				}
+			}
 		}
-		text = b.String()
+		text = scheduleListText(items, groupNames)
 		menu = scheduleListMenu(items)
 	}
 	if err := r.states.Set(ctx, userID, DialogState{View: ViewSchedules}); err != nil {
@@ -152,7 +154,31 @@ func (r *Router) handleScheduleCallback(ctx context.Context, in Incoming) (Outgo
 		if !ok {
 			return Outgoing{ChatID: in.ChatID, Text: "Неизвестная группа.", AnswerCallback: "Неизвестная группа."}, nil
 		}
-		return Outgoing{ChatID: in.ChatID, Text: "Выберите время ежедневной сводки.", Menu: scheduleTimeMenu(groupID), EditMessageID: in.CallbackMessage, AnswerCallback: "Время расписания."}, nil
+		return Outgoing{ChatID: in.ChatID, Text: "Сколько сводок создавать в день?", Menu: scheduleCountMenu(groupID), EditMessageID: in.CallbackMessage, AnswerCallback: "Группа выбрана."}, nil
+	case "count":
+		if len(fields) != 4 {
+			return unknownCallback(in), nil
+		}
+		groupID, ok := parseCallbackID(fields[2])
+		count, countOK := parseScheduleCount(fields[3])
+		if !ok || !countOK {
+			return Outgoing{ChatID: in.ChatID, Text: "Некорректные параметры расписания.", AnswerCallback: "Некорректные параметры."}, nil
+		}
+		return Outgoing{ChatID: in.ChatID, Text: scheduleTimePrompt(count, nil), Menu: scheduleTimeMenu(groupID, count, nil), EditMessageID: in.CallbackMessage, AnswerCallback: "Количество выбрано."}, nil
+	case "time":
+		if len(fields) != 5 {
+			return unknownCallback(in), nil
+		}
+		groupID, ok := parseCallbackID(fields[2])
+		count, countOK := parseScheduleCount(fields[3])
+		selected, timesOK := parseCallbackTimes(fields[4])
+		if !ok || !countOK || !timesOK || len(selected) == 0 || len(selected) > count {
+			return Outgoing{ChatID: in.ChatID, Text: "Некорректные параметры расписания.", AnswerCallback: "Некорректные параметры."}, nil
+		}
+		if len(selected) < count {
+			return Outgoing{ChatID: in.ChatID, Text: scheduleTimePrompt(count, selected), Menu: scheduleTimeMenu(groupID, count, selected), EditMessageID: in.CallbackMessage, AnswerCallback: "Время добавлено."}, nil
+		}
+		return r.createSchedulesFromButtons(ctx, in.ChatID, in.UserID, groupID, selected, in.CallbackMessage, "Создаю расписания.")
 	case "create":
 		if len(fields) != 4 {
 			return unknownCallback(in), nil
@@ -218,22 +244,41 @@ func (r *Router) showScheduleGroupPicker(ctx context.Context, chatID, userID int
 }
 
 func (r *Router) createScheduleFromButton(ctx context.Context, chatID, userID, groupID int64, scheduleTime string, editMessageID int, callbackAnswer string) (Outgoing, error) {
+	return r.createSchedulesFromButtons(ctx, chatID, userID, groupID, []string{scheduleTime}, editMessageID, callbackAnswer)
+}
+
+func (r *Router) createSchedulesFromButtons(ctx context.Context, chatID, userID, groupID int64, scheduleTimes []string, editMessageID int, callbackAnswer string) (Outgoing, error) {
 	if r.schedules == nil {
 		return Outgoing{ChatID: chatID, Text: "Расписания пока не настроены.", Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 	}
-	item, err := r.schedules.Create(ctx, schedules.Request{
-		TelegramUserID:  userID,
-		GroupID:         groupID,
-		Time:            scheduleTime,
-		Timezone:        "Europe/Moscow",
-		SummaryType:     "standard",
-		Enabled:         true,
-		EnabledProvided: true,
-	})
-	if err != nil {
-		return Outgoing{ChatID: chatID, Text: publicScheduleError(err), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	created := make([]domain.SummarySchedule, 0, len(scheduleTimes))
+	for _, scheduleTime := range scheduleTimes {
+		item, err := r.schedules.Create(ctx, schedules.Request{
+			TelegramUserID:  userID,
+			GroupID:         groupID,
+			Time:            scheduleTime,
+			Timezone:        "Europe/Moscow",
+			SummaryType:     "standard",
+			Enabled:         true,
+			EnabledProvided: true,
+		})
+		if err != nil {
+			for _, rollback := range created {
+				_ = r.schedules.Delete(ctx, userID, rollback.ID)
+			}
+			return Outgoing{ChatID: chatID, Text: publicScheduleError(err), Menu: BackMenu(), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+		}
+		created = append(created, *item)
 	}
-	return Outgoing{ChatID: chatID, Text: "Расписание создано:\n" + scheduleLine(*item), Menu: scheduleItemMenu(*item), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	if len(created) == 1 {
+		return Outgoing{ChatID: chatID, Text: "Расписание создано:\n" + scheduleLine(created[0]), Menu: scheduleItemMenu(created[0]), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Создано расписаний: %d\n", len(created))
+	for _, item := range created {
+		fmt.Fprintf(&b, "\n• %s — включено", item.Cron)
+	}
+	return Outgoing{ChatID: chatID, Text: b.String(), Menu: scheduleListMenu(created), EditMessageID: editMessageID, AnswerCallback: callbackAnswer}, nil
 }
 
 func publicScheduleError(err error) string {
@@ -242,6 +287,9 @@ func publicScheduleError(err error) string {
 	}
 	if errors.Is(err, tdlib.ErrUnauthorizedOwner) {
 		return "Доступ запрещен."
+	}
+	if errors.Is(err, schedules.ErrScheduleAlreadyExists) {
+		return "Для этой группы уже есть расписание на выбранное время. Выберите другое время."
 	}
 	return err.Error()
 }
@@ -252,15 +300,44 @@ func parseScheduleID(args string) (int64, bool) {
 }
 
 func scheduleLine(item domain.SummarySchedule) string {
-	status := "disabled"
+	status := "выключено"
 	if item.Enabled {
-		status = "enabled"
+		status = "включено"
 	}
-	export := "no export"
+	export := "без экспорта"
 	if item.ExportToObsidian {
-		export = "export"
+		export = "экспорт в Obsidian"
 	}
-	return fmt.Sprintf("#%d group=%d time=%s tz=%s %s %s", item.ID, item.GroupID, item.Cron, item.Timezone, status, export)
+	return fmt.Sprintf("#%d · группа %d · %s · %s · %s · %s", item.ID, item.GroupID, item.Cron, item.Timezone, status, export)
+}
+
+func scheduleListText(items []domain.SummarySchedule, groupNames map[int64]string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Расписаний: %d\n", len(items))
+	byGroup := make(map[int64][]domain.SummarySchedule)
+	groupOrder := make([]int64, 0)
+	for _, item := range items {
+		if _, exists := byGroup[item.GroupID]; !exists {
+			groupOrder = append(groupOrder, item.GroupID)
+		}
+		byGroup[item.GroupID] = append(byGroup[item.GroupID], item)
+	}
+	for _, groupID := range groupOrder {
+		name := groupNames[groupID]
+		if name == "" {
+			name = fmt.Sprintf("Группа %d", groupID)
+		}
+		groupItems := byGroup[groupID]
+		fmt.Fprintf(&b, "\n\n%s — расписаний в день: %d", name, len(groupItems))
+		for _, item := range groupItems {
+			status := "выключено"
+			if item.Enabled {
+				status = "включено"
+			}
+			fmt.Fprintf(&b, "\n• #%d · %s · %s", item.ID, item.Cron, status)
+		}
+	}
+	return b.String()
 }
 
 func scheduleDetails(item domain.SummarySchedule, runs []domain.ScheduleRun) string {
@@ -284,7 +361,7 @@ func scheduleDetails(item domain.SummarySchedule, runs []domain.ScheduleRun) str
 func scheduleListMenu(items []domain.SummarySchedule) Menu {
 	menu := Menu{{{Text: "Создать расписание", Data: ActionScheduleNew}}}
 	for _, item := range items {
-		menu = append(menu, []MenuButton{{Text: fmt.Sprintf("#%d", item.ID), Data: fmt.Sprintf("sched:open:%d", item.ID)}, {Text: "Запустить", Data: fmt.Sprintf("sched:run:%d", item.ID)}})
+		menu = append(menu, []MenuButton{{Text: fmt.Sprintf("#%d · %s", item.ID, item.Cron), Data: fmt.Sprintf("sched:open:%d", item.ID)}, {Text: "Запустить", Data: fmt.Sprintf("sched:run:%d", item.ID)}})
 	}
 	menu = append(menu, []MenuButton{{Text: "Назад", Data: ActionBackHome}})
 	return menu
@@ -313,12 +390,83 @@ func scheduleGroupsMenu(groups []domain.SourceGroup) Menu {
 	return menu
 }
 
-func scheduleTimeMenu(groupID int64) Menu {
+func scheduleCountMenu(groupID int64) Menu {
 	return Menu{
-		{{Text: "09:00", Data: fmt.Sprintf("sched:create:%d:0900", groupID)}, {Text: "12:00", Data: fmt.Sprintf("sched:create:%d:1200", groupID)}},
-		{{Text: "18:00", Data: fmt.Sprintf("sched:create:%d:1800", groupID)}, {Text: "21:00", Data: fmt.Sprintf("sched:create:%d:2100", groupID)}},
+		{{Text: "1 раз", Data: fmt.Sprintf("sched:count:%d:1", groupID)}, {Text: "2 раза", Data: fmt.Sprintf("sched:count:%d:2", groupID)}, {Text: "3 раза", Data: fmt.Sprintf("sched:count:%d:3", groupID)}},
 		{{Text: "Назад", Data: ActionScheduleNew}},
 	}
+}
+
+var scheduleTimeOptions = []string{"06:00", "09:00", "12:00", "15:00", "18:00", "21:00"}
+
+func scheduleTimeMenu(groupID int64, count int, selected []string) Menu {
+	selectedSet := make(map[string]bool, len(selected))
+	for _, value := range selected {
+		selectedSet[value] = true
+	}
+	menu := make(Menu, 0, 4)
+	row := make([]MenuButton, 0, 3)
+	for _, value := range scheduleTimeOptions {
+		if selectedSet[value] {
+			continue
+		}
+		times := append(append([]string(nil), selected...), value)
+		row = append(row, MenuButton{Text: value, Data: fmt.Sprintf("sched:time:%d:%d:%s", groupID, count, encodeCallbackTimes(times))})
+		if len(row) == 3 {
+			menu = append(menu, row)
+			row = make([]MenuButton, 0, 3)
+		}
+	}
+	if len(row) > 0 {
+		menu = append(menu, row)
+	}
+	menu = append(menu, []MenuButton{{Text: "Назад", Data: fmt.Sprintf("sched:group:%d", groupID)}})
+	return menu
+}
+
+func scheduleTimePrompt(count int, selected []string) string {
+	remaining := count - len(selected)
+	if len(selected) == 0 {
+		return fmt.Sprintf("Выберите время. Нужно выбрать: %d.", count)
+	}
+	return fmt.Sprintf("Выбрано: %s. Осталось выбрать: %d.", strings.Join(selected, ", "), remaining)
+}
+
+func parseScheduleCount(value string) (int, bool) {
+	count, err := strconv.Atoi(value)
+	return count, err == nil && count >= 1 && count <= 3
+}
+
+func encodeCallbackTimes(values []string) string {
+	encoded := make([]string, 0, len(values))
+	for _, value := range values {
+		encoded = append(encoded, strings.ReplaceAll(value, ":", ""))
+	}
+	return strings.Join(encoded, ",")
+}
+
+func parseCallbackTimes(value string) ([]string, bool) {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for _, part := range parts {
+		parsed := callbackTime(part)
+		if seen[parsed] || !containsScheduleTime(parsed) {
+			return nil, false
+		}
+		seen[parsed] = true
+		result = append(result, parsed)
+	}
+	return result, true
+}
+
+func containsScheduleTime(value string) bool {
+	for _, option := range scheduleTimeOptions {
+		if option == value {
+			return true
+		}
+	}
+	return false
 }
 
 func callbackTime(value string) string {

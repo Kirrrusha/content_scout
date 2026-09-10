@@ -13,7 +13,10 @@ import (
 	"github.com/kirilllebedenko/content_scout/internal/telegram/tdlib"
 )
 
-var ErrScheduleNotFound = errors.New("summary schedule not found")
+var (
+	ErrScheduleNotFound      = errors.New("summary schedule not found")
+	ErrScheduleAlreadyExists = errors.New("summary schedule already exists")
+)
 
 type Request struct {
 	TelegramUserID   int64
@@ -65,6 +68,15 @@ func (s *Service) Create(ctx context.Context, req Request) (*domain.SummarySched
 	schedule, err := scheduleFromRequest(user.ID, 0, req, true)
 	if err != nil {
 		return nil, err
+	}
+	existing, err := s.schedules.ListByUser(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list schedules: %w", err)
+	}
+	for _, item := range existing {
+		if item.GroupID == schedule.GroupID && item.Cron == schedule.Cron && item.Timezone == schedule.Timezone {
+			return nil, ErrScheduleAlreadyExists
+		}
 	}
 	return s.schedules.Create(ctx, schedule)
 }

@@ -2,6 +2,7 @@ package schedules
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -37,6 +38,21 @@ func TestServiceRejectsInvalidSchedule(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Create() error = nil, want validation error")
+	}
+}
+
+func TestServiceRejectsDuplicateGroupTime(t *testing.T) {
+	service, repo, _ := newTestService()
+	repo.items[10] = domain.SummarySchedule{ID: 10, UserID: 1, GroupID: 7, Cron: "09:00", Timezone: "Europe/Moscow"}
+
+	_, err := service.Create(context.Background(), Request{
+		TelegramUserID: 42,
+		GroupID:        7,
+		Time:           "09:00",
+		Timezone:       "Europe/Moscow",
+	})
+	if !errors.Is(err, ErrScheduleAlreadyExists) {
+		t.Fatalf("Create() error = %v, want ErrScheduleAlreadyExists", err)
 	}
 }
 
