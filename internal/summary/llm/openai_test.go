@@ -88,6 +88,18 @@ func TestHeadlinePromptRequiresEditorialTitleAndShortDescription(t *testing.T) {
 	}
 }
 
+func TestSummaryPromptRequiresPublishableShortTopicText(t *testing.T) {
+	for _, want := range []string{
+		"готовый к публикации короткий абзац из 1–2 предложений",
+		"обычно до 300 знаков",
+		"не добавляй вводные фразы, списки, Markdown и ссылки",
+	} {
+		if !strings.Contains(summarySystemPrompt, want) {
+			t.Fatalf("summary prompt = %q, want fragment %q", summarySystemPrompt, want)
+		}
+	}
+}
+
 func TestOpenAICompatibleConvertToArticle(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {

@@ -709,7 +709,7 @@ func TestRouterSummaryOpenCallback(t *testing.T) {
 	if out.ParseMode != "HTML" {
 		t.Fatalf("parse mode = %q, want HTML", out.ParseMode)
 	}
-	if !strings.Contains(out.Text, "Сводка #10") || !strings.Contains(out.Text, "<b>1. Первая тема</b>") || !strings.Contains(out.Text, "Короткое описание второй темы.") || out.Menu[0][0].Data != "sum:topic:10:1" {
+	if !strings.Contains(out.Text, "Сводка #10") || !strings.Contains(out.Text, "<b>1️⃣ Первая тема</b>") || !strings.Contains(out.Text, "Короткое описание второй темы.") || out.Menu[0][0].Data != "sum:topic:10:1" {
 		t.Fatalf("output = %q menu=%+v", out.Text, out.Menu)
 	}
 }
@@ -797,14 +797,15 @@ func TestSummaryTextShowsEveryTopicAsTitleAndShortDescription(t *testing.T) {
 		Overview:    "Этот общий обзор не нужен, когда есть темы.",
 		TopicsCount: 2,
 	},
-		domain.SummaryTopic{Title: "Первая <тема>", ShortSummary: "Первое короткое описание."},
+		domain.SummaryTopic{Title: "Первая <тема>", ShortSummary: "Первое короткое описание.", Messages: []domain.SummaryTopicMessage{{SourceTitle: "Первоисточник", SourceURL: "https://t.me/source/1"}}},
 		domain.SummaryTopic{Title: "Вторая тема", ShortSummary: "Второе короткое описание."},
 	)
 
 	for _, want := range []string{
-		"<b>1. Первая &lt;тема&gt;</b>",
+		"<b>1️⃣ Первая &lt;тема&gt;</b>",
 		"Первое короткое описание.",
-		"<b>2. Вторая тема</b>",
+		`<a href="https://t.me/source/1">Первоисточник</a>`,
+		"<b>2️⃣ Вторая тема</b>",
 		"Второе короткое описание.",
 	} {
 		if !strings.Contains(got, want) {
@@ -813,6 +814,27 @@ func TestSummaryTextShowsEveryTopicAsTitleAndShortDescription(t *testing.T) {
 	}
 	if strings.Contains(got, "Этот общий обзор") {
 		t.Fatalf("summaryText() = %q, should replace overview with topic index", got)
+	}
+}
+
+func TestSummaryTopicLinksUseOneDirectNewsLinkPerSource(t *testing.T) {
+	got := summaryTopicLinksText([]domain.SummaryTopicMessage{
+		{ChatID: 10, SourceTitle: "Источник", SourceURL: "https://t.me/source/1"},
+		{ChatID: 10, SourceTitle: "Источник", SourceURL: "https://t.me/source/2"},
+		{ChatID: 20, SourceTitle: "Другой & источник", SourceURL: "https://t.me/other/3?single=true&ref=test"},
+		{ChatID: 30, SourceTitle: "Без ссылки", SourceURL: "not-a-url"},
+	})
+
+	for _, want := range []string{
+		`<a href="https://t.me/source/1">Источник</a>`,
+		`<a href="https://t.me/other/3?single=true&amp;ref=test">Другой &amp; источник</a>`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summaryTopicLinksText() = %q, want fragment %q", got, want)
+		}
+	}
+	if strings.Contains(got, "source/2") || strings.Contains(got, "Без ссылки") {
+		t.Fatalf("summaryTopicLinksText() = %q, contains duplicate or invalid source", got)
 	}
 }
 

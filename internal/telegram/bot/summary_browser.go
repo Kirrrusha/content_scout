@@ -200,9 +200,69 @@ func summaryTopicIndexText(topics []domain.SummaryTopic) string {
 	for index, topic := range topics {
 		title := compactText(fallbackTitle(topic.Title), 72)
 		description := compactText(fallbackTitle(topic.ShortSummary), descriptionLimit)
-		blocks = append(blocks, fmt.Sprintf("<b>%d. %s</b>\n%s", index+1, escapeHTML(title), escapeHTML(description)))
+		block := fmt.Sprintf("<b>%s %s</b>\n%s", topicNumber(index+1), escapeHTML(title), escapeHTML(description))
+		if links := summaryTopicLinksText(topic.Messages); links != "" {
+			block += "\n" + links
+		}
+		blocks = append(blocks, block)
 	}
 	return strings.Join(blocks, "\n\n")
+}
+
+func topicNumber(position int) string {
+	switch position {
+	case 1:
+		return "1️⃣"
+	case 2:
+		return "2️⃣"
+	case 3:
+		return "3️⃣"
+	case 4:
+		return "4️⃣"
+	case 5:
+		return "5️⃣"
+	case 6:
+		return "6️⃣"
+	case 7:
+		return "7️⃣"
+	case 8:
+		return "8️⃣"
+	case 9:
+		return "9️⃣"
+	case 10:
+		return "🔟"
+	default:
+		return fmt.Sprintf("%d.", position)
+	}
+}
+
+func summaryTopicLinksText(messages []domain.SummaryTopicMessage) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	const limit = 6
+	links := make([]string, 0, min(len(messages), limit))
+	seen := make(map[string]struct{}, len(messages))
+	for _, message := range messages {
+		messageURL := strings.TrimSpace(message.SourceURL)
+		if !isHTTPURL(messageURL) {
+			continue
+		}
+		key := messageURL
+		if message.ChatID != 0 {
+			key = fmt.Sprintf("chat:%d", message.ChatID)
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		linkTitle := compactText(fallbackTitle(message.SourceTitle), 48)
+		links = append(links, fmt.Sprintf("<a href=\"%s\">%s</a>", escapeHTML(messageURL), escapeHTML(linkTitle)))
+		if len(links) >= limit {
+			break
+		}
+	}
+	return strings.Join(links, " · ")
 }
 
 func compactText(value string, limit int) string {
