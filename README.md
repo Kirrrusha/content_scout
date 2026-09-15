@@ -129,7 +129,7 @@ Bot commands currently available:
 | `/group_add_chat <group_id> <chat_id> [priority]` | Add a Telegram chat to a source group. |
 | `/group_add_public <group_id> <@username or t.me URL>` | Add a public channel without subscribing to it. |
 | `/group_remove_chat <group_id> <chat_id>` | Remove a chat from a source group. |
-| `/collect_group <group_id> [new\|24h\|3d\|week\|latest_n] [limit]` | Collect messages from all enabled chats in a group. |
+| `/collect_group <group_id> [new\|unread\|24h\|3d\|week\|latest_n] [limit]` | Collect messages from all enabled chats in a group. |
 | `/summarize_collection <collection_job_id> [short\|standard\|detailed]` | Generate a summary from a collection job. |
 | `/summaries` | Show recent summaries. |
 | `/summary <summary_id>` | Show one summary in full. |
@@ -222,7 +222,7 @@ Request body:
 {"telegram_user_id": 123, "mode": "new", "limit": 100}
 ```
 
-Supported modes are `new`, `24h`, `3d`, `week`, and `latest_n`. Collection jobs store fetched messages but intentionally do not advance `read_positions`; that happens only after a later successful summary.
+Supported modes are `new`, `unread`, `24h`, `3d`, `week`, and `latest_n`. `unread` uses Telegram's cached unread counter for each chat and requests that many latest messages. Collection jobs store fetched messages but intentionally do not advance `read_positions`; that happens only after a later successful summary.
 
 Filtering and deduplication currently run as pure Go services over collected messages:
 

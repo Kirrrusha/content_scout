@@ -136,7 +136,11 @@ func (s *Service) collectMessages(ctx context.Context, userID, jobID int64, req 
 		if position != nil && req.Mode == domain.CollectionModeNewOnly {
 			fromMessageID = position.LastSummarizedMessageID
 		}
-		messages, err := client.GetChatHistory(ctx, chat.TelegramChatID, fromMessageID, req.Limit)
+		historyLimit := collectionLimit(req, chat)
+		if historyLimit == 0 {
+			continue
+		}
+		messages, err := client.GetChatHistory(ctx, chat.TelegramChatID, fromMessageID, historyLimit)
 		if err != nil {
 			return nil, 0, fmt.Errorf("get chat history: %w", err)
 		}
@@ -207,6 +211,16 @@ func sinceForMode(mode domain.CollectionMode, now time.Time) *time.Time {
 		return nil
 	}
 	return &since
+}
+
+func collectionLimit(req Request, chat domain.TelegramChat) int {
+	if req.Mode == domain.CollectionModeUnread {
+		if chat.UnreadCount <= 0 {
+			return 0
+		}
+		return chat.UnreadCount
+	}
+	return req.Limit
 }
 
 func shouldSkipMessage(message domain.TelegramMessage, position *domain.ReadPosition, since *time.Time, mode domain.CollectionMode) bool {

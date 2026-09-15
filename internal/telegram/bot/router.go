@@ -682,7 +682,7 @@ func (r *Router) collectGroup(ctx context.Context, chatID, userID int64, raw str
 	}
 	parts := strings.Fields(raw)
 	if len(parts) == 0 {
-		return Outgoing{ChatID: chatID, Text: "Использование: /collect_group <group_id> [new|24h|3d|week|latest_n] [limit]", Menu: BackMenu()}, nil
+		return Outgoing{ChatID: chatID, Text: "Использование: /collect_group <group_id> [new|unread|24h|3d|week|latest_n] [limit]", Menu: BackMenu()}, nil
 	}
 	groupID, err := parseID(parts[0])
 	if err != nil {

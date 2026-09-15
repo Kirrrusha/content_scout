@@ -129,7 +129,7 @@ Authorization: Bearer <token>
 | `/group_add_chat <group_id> <chat_id> [priority]` | Добавить Telegram-чат в группу источников. |
 | `/group_add_public <group_id> <@username или ссылка t.me>` | Добавить открытый канал без подписки на него. |
 | `/group_remove_chat <group_id> <chat_id>` | Удалить чат из группы источников. |
-| `/collect_group <group_id> [new\|24h\|3d\|week\|latest_n] [limit]` | Собрать сообщения из всех включённых чатов группы. |
+| `/collect_group <group_id> [new\|unread\|24h\|3d\|week\|latest_n] [limit]` | Собрать сообщения из всех включённых чатов группы. |
 | `/summarize_collection <collection_job_id> [short\|standard\|detailed]` | Сгенерировать summary из collection job. |
 | `/summaries` | Показать последние summary. |
 | `/summary <summary_id>` | Показать одно summary целиком. |
@@ -222,7 +222,7 @@ POST   /collections/group/{id}
 {"telegram_user_id": 123, "mode": "new", "limit": 100}
 ```
 
-Поддерживаемые режимы: `new`, `24h`, `3d`, `week` и `latest_n`. Collection jobs сохраняют найденные сообщения, но намеренно не сдвигают `read_positions`; позиция будет обновляться только после успешного summary в следующем этапе.
+Поддерживаемые режимы: `new`, `unread`, `24h`, `3d`, `week` и `latest_n`. `unread` использует сохранённый счётчик непрочитанных Telegram для каждого чата и запрашивает столько последних сообщений. Collection jobs сохраняют найденные сообщения, но намеренно не сдвигают `read_positions`; позиция будет обновляться только после успешного summary в следующем этапе.
 
 Фильтрация и дедупликация сейчас работают как чистые Go-сервисы поверх collected messages:
 

@@ -81,6 +81,82 @@ func TestCollectGroupCollectsNewMessagesWithoutUpdatingReadPosition(t *testing.T
 	}
 }
 
+func TestCollectGroupCollectsUnreadMessagesFromTelegramUnreadCount(t *testing.T) {
+	ctx := context.Background()
+	users := newMemoryUserRepo()
+	user, err := users.UpsertByTelegramID(ctx, 42)
+	if err != nil {
+		t.Fatalf("UpsertByTelegramID() error = %v", err)
+	}
+	sessions := newMemorySessionRepo()
+	_, err = sessions.Upsert(ctx, domain.TelegramSession{UserID: user.ID, StoragePath: "/tmp/tdlib", Status: domain.SessionStatusConnected})
+	if err != nil {
+		t.Fatalf("session Upsert() error = %v", err)
+	}
+	groups := newMemoryGroupRepo()
+	group, err := groups.Create(ctx, domain.SourceGroup{UserID: user.ID, Name: "Golang"})
+	if err != nil {
+		t.Fatalf("group Create() error = %v", err)
+	}
+	_ = groups.AddChat(ctx, domain.SourceGroupChat{GroupID: group.ID, ChatID: 10, Enabled: true})
+	chats := newMemoryChatRepo([]domain.TelegramChat{{
+		ID:             10,
+		UserID:         user.ID,
+		TelegramChatID: -100,
+		Title:          "Backend",
+		Type:           domain.ChatTypeChannel,
+		UnreadCount:    2,
+	}})
+	positions := newMemoryReadPositionRepo()
+	err = positions.Upsert(ctx, domain.ReadPosition{UserID: user.ID, ChatID: 10, LastSummarizedMessageID: 100})
+	if err != nil {
+		t.Fatalf("position Upsert() error = %v", err)
+	}
+	collections := newMemoryCollectionRepo()
+	client := &fakeClient{
+		state: tdlib.AuthorizationStateReady,
+		history: []domain.TelegramMessage{
+			{ChatID: -100, MessageID: 99, Date: time.Now(), Text: "unread older than summary marker"},
+			{ChatID: -100, MessageID: 98, Date: time.Now(), Text: "another unread older than summary marker"},
+			{ChatID: -100, MessageID: 97, Date: time.Now(), Text: "already read"},
+		},
+	}
+	service := NewService(42, users, sessions, groups, chats, positions, collections, fakeFactory{client: client})
+
+	result, err := service.CollectGroup(ctx, Request{
+		TelegramUserID: 42,
+		GroupID:        group.ID,
+		Mode:           domain.CollectionModeUnread,
+		Limit:          100,
+	})
+	if err != nil {
+		t.Fatalf("CollectGroup() error = %v", err)
+	}
+	if result.MessagesCount != 2 {
+		t.Fatalf("MessagesCount = %d, want 2", result.MessagesCount)
+	}
+	if client.fromMessageID != 0 {
+		t.Fatalf("fromMessageID = %d, want 0", client.fromMessageID)
+	}
+	if client.limit != 2 {
+		t.Fatalf("limit = %d, want 2", client.limit)
+	}
+	position, err := positions.Find(ctx, user.ID, 10)
+	if err != nil {
+		t.Fatalf("position Find() error = %v", err)
+	}
+	if position.LastSummarizedMessageID != 100 {
+		t.Fatalf("read position advanced to %d, want 100", position.LastSummarizedMessageID)
+	}
+	messages, err := collections.ListMessages(ctx, result.JobID)
+	if err != nil {
+		t.Fatalf("ListMessages() error = %v", err)
+	}
+	if len(messages) != 2 || messages[0].MessageID != 99 || messages[1].MessageID != 98 {
+		t.Fatalf("messages = %+v", messages)
+	}
+}
+
 type fakeFactory struct {
 	client *fakeClient
 }
@@ -93,6 +169,7 @@ type fakeClient struct {
 	state         tdlib.AuthorizationState
 	history       []domain.TelegramMessage
 	fromMessageID int64
+	limit         int
 }
 
 func (c *fakeClient) Start(context.Context) error { return nil }
@@ -112,8 +189,12 @@ func (c *fakeClient) ListChats(context.Context, tdlib.ChatList) ([]domain.Telegr
 func (c *fakeClient) ListFolderChats(context.Context, int32) ([]domain.TelegramChat, error) {
 	return nil, nil
 }
-func (c *fakeClient) GetChatHistory(_ context.Context, _ int64, fromMessageID int64, _ int) ([]domain.TelegramMessage, error) {
+func (c *fakeClient) GetChatHistory(_ context.Context, _ int64, fromMessageID int64, limit int) ([]domain.TelegramMessage, error) {
 	c.fromMessageID = fromMessageID
+	c.limit = limit
+	if limit > 0 && limit < len(c.history) {
+		return c.history[:limit], nil
+	}
 	return c.history, nil
 }
 func (c *fakeClient) MarkMessagesRead(context.Context, int64, []int64) error { return nil }

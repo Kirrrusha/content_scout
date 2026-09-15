@@ -1,9 +1,11 @@
 # Production Deployment
 
 Production runs on one Cloud.ru VM with Docker Compose. Images are built by
-GitVerse CI/CD and pushed to Cloud.ru Artifact Registry.
+GitVerse CI/CD and pushed to Cloud.ru Artifact Registry. GitHub Actions has the
+same deploy pipeline under `.github/workflows/deploy.yml` and can be used as a
+fallback CI/CD source.
 
-## Required GitVerse Secrets
+## Required CI/CD Secrets
 
 - `CLOUDRU_REGISTRY` (`kirrrusha.cr.cloud.ru` for the current Cloud.ru registry)
 - `CLOUDRU_REGISTRY_KEY_ID`
@@ -64,7 +66,9 @@ It installs Docker, Docker Compose, `jq`, configures 2 GB swap, prepares
 
 After the GitVerse secrets and Cloud.ru secret are present, pushes to `main`
 trigger `.gitverse/workflows/deploy.yml`. It can also be started manually with
-`workflow_dispatch`.
+`workflow_dispatch`. For the fallback path, add the same secrets to GitHub and
+run `.github/workflows/deploy.yml` manually from GitHub Actions. The GitHub
+workflow only runs for the `Kirrrusha` GitHub actor.
 
 Enable CI/CD in GitVerse repository settings before relying on that workflow.
 The GitVerse workflow uses Kaniko because Cloud-hosted GitVerse runners do not

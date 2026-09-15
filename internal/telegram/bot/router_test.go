@@ -646,6 +646,21 @@ func TestRouterNewSummaryButtonFlow(t *testing.T) {
 		UserID:          42,
 		ChatID:          100,
 		CallbackID:      "callback-2",
+		CallbackData:    "newsum:group:7",
+		CallbackMessage: 5,
+	})
+	if err != nil {
+		t.Fatalf("Handle(new summary group) error = %v", err)
+	}
+	if out.Menu[1][0].Data != "newsum:mode:7:unread" {
+		t.Fatalf("menu = %+v", out.Menu)
+	}
+
+	out, err = router.Handle(ctx, Incoming{
+		Kind:            IncomingCallback,
+		UserID:          42,
+		ChatID:          100,
+		CallbackID:      "callback-3",
 		CallbackData:    "newsum:mode:7:24h",
 		CallbackMessage: 5,
 	})
@@ -663,7 +678,7 @@ func TestRouterNewSummaryButtonFlow(t *testing.T) {
 		Kind:            IncomingCallback,
 		UserID:          42,
 		ChatID:          100,
-		CallbackID:      "callback-3",
+		CallbackID:      "callback-4",
 		CallbackData:    "newsum:generate:9",
 		CallbackMessage: 5,
 	})

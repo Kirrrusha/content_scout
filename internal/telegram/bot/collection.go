@@ -80,7 +80,7 @@ func (r *Router) handleNewSummaryCallback(ctx context.Context, in Incoming) (Out
 		}
 		return Outgoing{
 			ChatID:         in.ChatID,
-			Text:           "Какие сообщения взять в сводку?\n\nНовые (непрочитанные) — сообщения после последней успешной сводки по этой группе. После создания сводки они будут помечены как прочитанные.\n\nПериоды 24 часа, 3 дня и неделя берут сообщения по дате публикации.",
+			Text:           "Какие сообщения взять в сводку?\n\nНовые — сообщения после последней успешной сводки по этой группе.\n\nВсе непрочитанные — последние непрочитанные сообщения по счетчику Telegram в каждом чате.\n\nПосле создания сводки выбранные сообщения будут помечены как прочитанные.\n\nПериоды 24 часа, 3 дня и неделя берут сообщения по дате публикации.",
 			Menu:           newSummaryModeMenu(groupID),
 			EditMessageID:  in.CallbackMessage,
 			AnswerCallback: "Период сбора.",
@@ -159,7 +159,8 @@ func newSummaryGroupsMenu(groups []domain.SourceGroup) Menu {
 
 func newSummaryModeMenu(groupID int64) Menu {
 	return Menu{
-		{{Text: "Новые (непрочитанные)", Data: fmt.Sprintf("newsum:mode:%d:%s", groupID, domain.CollectionModeNewOnly)}},
+		{{Text: "Новые", Data: fmt.Sprintf("newsum:mode:%d:%s", groupID, domain.CollectionModeNewOnly)}},
+		{{Text: "Все непрочитанные", Data: fmt.Sprintf("newsum:mode:%d:%s", groupID, domain.CollectionModeUnread)}},
 		{{Text: "24 часа", Data: fmt.Sprintf("newsum:mode:%d:%s", groupID, domain.CollectionModeLast24H)}, {Text: "3 дня", Data: fmt.Sprintf("newsum:mode:%d:%s", groupID, domain.CollectionModeLast3D)}},
 		{{Text: "Неделя", Data: fmt.Sprintf("newsum:mode:%d:%s", groupID, domain.CollectionModeWeek)}},
 		{{Text: "Добавить открытый канал", Data: fmt.Sprintf("newsum:addpublic:%d", groupID)}},

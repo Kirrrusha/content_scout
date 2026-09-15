@@ -75,6 +75,7 @@ type CollectionMode string
 
 const (
 	CollectionModeNewOnly CollectionMode = "new"
+	CollectionModeUnread  CollectionMode = "unread"
 	CollectionModeLast24H CollectionMode = "24h"
 	CollectionModeLast3D  CollectionMode = "3d"
 	CollectionModeWeek    CollectionMode = "week"
