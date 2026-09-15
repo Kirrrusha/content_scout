@@ -856,6 +856,24 @@ func TestSummaryTextShowsEveryTopicAsTitleAndShortDescription(t *testing.T) {
 	}
 }
 
+func TestSummaryTextKeepsMoreDescriptionForLargeTopicLists(t *testing.T) {
+	longDescription := "Рано утром 14 сентября 76-летний водитель автомобиля погиб в одиночном ДТП на трассе после потери управления."
+	topics := make([]domain.SummaryTopic, 21)
+	for i := range topics {
+		topics[i] = domain.SummaryTopic{Title: "Тема", ShortSummary: longDescription}
+	}
+
+	got := summaryText(domain.Summary{
+		ID:          10,
+		Title:       "Главное",
+		TopicsCount: len(topics),
+	}, topics...)
+
+	if !strings.Contains(got, "после потери управления") {
+		t.Fatalf("summaryText() = %q, want longer topic description", got)
+	}
+}
+
 func TestSummaryTopicLinksUseOneDirectNewsLinkPerSource(t *testing.T) {
 	got := summaryTopicLinksText([]domain.SummaryTopicMessage{
 		{ChatID: 10, SourceTitle: "Источник", SourceURL: "https://t.me/source/1"},

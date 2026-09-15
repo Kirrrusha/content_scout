@@ -192,9 +192,9 @@ func summaryTopicIndexText(topics []domain.SummaryTopic) string {
 	if len(topics) == 0 {
 		return ""
 	}
-	descriptionLimit := 220
-	if perTopic := 3000/len(topics) - 80; perTopic < descriptionLimit {
-		descriptionLimit = max(perTopic, 40)
+	descriptionLimit := 420
+	if perTopic := 3900/len(topics) - 50; perTopic < descriptionLimit {
+		descriptionLimit = max(perTopic, 80)
 	}
 	blocks := make([]string, 0, len(topics))
 	for index, topic := range topics {
