@@ -79,6 +79,11 @@ func (s *Service) CollectGroup(ctx context.Context, req Request) (*Result, error
 	if err != nil {
 		return nil, err
 	}
+	if req.Mode == domain.CollectionModeUnread {
+		if err := refreshUnreadCounts(ctx, user.ID, chatMap, client); err != nil {
+			return nil, err
+		}
+	}
 
 	job, err := s.collections.CreateJob(ctx, domain.MessageCollectionJob{
 		UserID:  user.ID,
@@ -196,6 +201,36 @@ func (s *Service) userChatMap(ctx context.Context, userID int64) (map[int64]doma
 		chatMap[chat.ID] = chat
 	}
 	return chatMap, nil
+}
+
+func refreshUnreadCounts(ctx context.Context, userID int64, chatMap map[int64]domain.TelegramChat, client tdlib.TelegramClient) error {
+	mainChats, err := client.ListChats(ctx, tdlib.ChatListMain)
+	if err != nil {
+		return fmt.Errorf("refresh main telegram chats: %w", err)
+	}
+	archiveChats, err := client.ListChats(ctx, tdlib.ChatListArchive)
+	if err != nil {
+		return fmt.Errorf("refresh archived telegram chats: %w", err)
+	}
+	unreadByTelegramID := make(map[int64]int, len(mainChats)+len(archiveChats))
+	for _, chat := range mainChats {
+		unreadByTelegramID[chat.TelegramChatID] = chat.UnreadCount
+	}
+	for _, chat := range archiveChats {
+		unreadByTelegramID[chat.TelegramChatID] = chat.UnreadCount
+	}
+	for id, chat := range chatMap {
+		if chat.UserID != userID {
+			continue
+		}
+		unreadCount, ok := unreadByTelegramID[chat.TelegramChatID]
+		if !ok {
+			continue
+		}
+		chat.UnreadCount = unreadCount
+		chatMap[id] = chat
+	}
+	return nil
 }
 
 func sinceForMode(mode domain.CollectionMode, now time.Time) *time.Time {

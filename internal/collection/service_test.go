@@ -105,7 +105,6 @@ func TestCollectGroupCollectsUnreadMessagesFromTelegramUnreadCount(t *testing.T)
 		TelegramChatID: -100,
 		Title:          "Backend",
 		Type:           domain.ChatTypeChannel,
-		UnreadCount:    2,
 	}})
 	positions := newMemoryReadPositionRepo()
 	err = positions.Upsert(ctx, domain.ReadPosition{UserID: user.ID, ChatID: 10, LastSummarizedMessageID: 100})
@@ -115,6 +114,12 @@ func TestCollectGroupCollectsUnreadMessagesFromTelegramUnreadCount(t *testing.T)
 	collections := newMemoryCollectionRepo()
 	client := &fakeClient{
 		state: tdlib.AuthorizationStateReady,
+		mainChats: []domain.TelegramChat{{
+			TelegramChatID: -100,
+			Title:          "Backend",
+			Type:           domain.ChatTypeChannel,
+			UnreadCount:    2,
+		}},
 		history: []domain.TelegramMessage{
 			{ChatID: -100, MessageID: 99, Date: time.Now(), Text: "unread older than summary marker"},
 			{ChatID: -100, MessageID: 98, Date: time.Now(), Text: "another unread older than summary marker"},
@@ -141,6 +146,9 @@ func TestCollectGroupCollectsUnreadMessagesFromTelegramUnreadCount(t *testing.T)
 	if client.limit != 2 {
 		t.Fatalf("limit = %d, want 2", client.limit)
 	}
+	if client.listChatsCalls != 2 {
+		t.Fatalf("list chats calls = %d, want 2", client.listChatsCalls)
+	}
 	position, err := positions.Find(ctx, user.ID, 10)
 	if err != nil {
 		t.Fatalf("position Find() error = %v", err)
@@ -166,10 +174,13 @@ func (f fakeFactory) NewClient(string) (tdlib.TelegramClient, error) {
 }
 
 type fakeClient struct {
-	state         tdlib.AuthorizationState
-	history       []domain.TelegramMessage
-	fromMessageID int64
-	limit         int
+	state          tdlib.AuthorizationState
+	mainChats      []domain.TelegramChat
+	archiveChats   []domain.TelegramChat
+	history        []domain.TelegramMessage
+	fromMessageID  int64
+	limit          int
+	listChatsCalls int
 }
 
 func (c *fakeClient) Start(context.Context) error { return nil }
@@ -183,8 +194,16 @@ func (c *fakeClient) SubmitPassword(context.Context, string) error    { return n
 func (c *fakeClient) ListFolders(context.Context) ([]domain.TelegramFolder, error) {
 	return nil, nil
 }
-func (c *fakeClient) ListChats(context.Context, tdlib.ChatList) ([]domain.TelegramChat, error) {
-	return nil, nil
+func (c *fakeClient) ListChats(_ context.Context, list tdlib.ChatList) ([]domain.TelegramChat, error) {
+	c.listChatsCalls++
+	switch list {
+	case tdlib.ChatListMain:
+		return c.mainChats, nil
+	case tdlib.ChatListArchive:
+		return c.archiveChats, nil
+	default:
+		return nil, nil
+	}
 }
 func (c *fakeClient) ListFolderChats(context.Context, int32) ([]domain.TelegramChat, error) {
 	return nil, nil
