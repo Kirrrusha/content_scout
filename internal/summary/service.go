@@ -11,6 +11,7 @@ import (
 
 	"github.com/kirilllebedenko/content_scout/internal/domain"
 	"github.com/kirilllebedenko/content_scout/internal/storage"
+	"github.com/kirilllebedenko/content_scout/internal/summary/deduplicator"
 	"github.com/kirilllebedenko/content_scout/internal/summary/filter"
 	"github.com/kirilllebedenko/content_scout/internal/summary/llm"
 	"github.com/kirilllebedenko/content_scout/internal/summary/pipeline"
@@ -123,17 +124,18 @@ func (s *Service) GenerateFromCollection(ctx context.Context, req GenerateReques
 	}
 
 	chatByID := s.chatsByID(ctx, user.ID)
-	input := summaryInput(processed, req.Format, chatByID)
+	balanced := balancedPipelineResult(processed)
+	input := summaryInput(balanced, req.Format, chatByID)
 	llmResult, err := s.summarizer.Summarize(ctx, input)
 	if err != nil {
 		s.markJobFailed(ctx, summaryJob.ID, err)
 		return nil, err
 	}
-	topics := topicsFromResult(llmResult, processed, chatByID)
-	excludedMessages := excludedMessagesFromResult(llmResult, processed)
+	topics := topicsFromResult(llmResult, balanced, chatByID)
+	excludedMessages := excludedMessagesFromResult(llmResult, balanced)
 	usedMessagesCount := distinctTopicMessageCount(topics)
-	if classified := usedMessagesCount + len(excludedMessages); classified != processed.Stats.KeptMessages {
-		err := fmt.Errorf("summary message coverage mismatch: classified=%d kept=%d", classified, processed.Stats.KeptMessages)
+	if classified := usedMessagesCount + len(excludedMessages); classified != balanced.Stats.KeptMessages {
+		err := fmt.Errorf("summary message coverage mismatch: classified=%d kept=%d", classified, balanced.Stats.KeptMessages)
 		s.markJobFailed(ctx, summaryJob.ID, err)
 		return nil, err
 	}
@@ -141,12 +143,12 @@ func (s *Service) GenerateFromCollection(ctx context.Context, req GenerateReques
 		JobID:                 summaryJob.ID,
 		Title:                 llmResult.Title,
 		Overview:              llmResult.Overview,
-		MessagesCount:         processed.Stats.KeptMessages,
+		MessagesCount:         balanced.Stats.KeptMessages,
 		UsedMessagesCount:     usedMessagesCount,
 		ExcludedMessagesCount: len(excludedMessages),
 		SourcesCount:          distinctChatCount(messages),
 		TopicsCount:           len(topics),
-		Markdown:              renderMarkdown(llmResult, processed, chatByID),
+		Markdown:              renderMarkdown(llmResult, balanced, chatByID),
 		ExcludedMessages:      excludedMessages,
 	}, topics)
 	if err != nil {
@@ -188,6 +190,60 @@ func (s *Service) ownerUser(ctx context.Context, telegramUserID int64) (*domain.
 		return nil, errors.New("owner user is not initialized")
 	}
 	return user, nil
+}
+
+func balancedPipelineResult(processed *pipeline.Result) *pipeline.Result {
+	if processed == nil || len(processed.Clusters) < 3 {
+		return processed
+	}
+	balanced := *processed
+	balanced.Clusters = balanceClustersByChat(processed.Clusters)
+	return &balanced
+}
+
+func balanceClustersByChat(clusters []deduplicator.Cluster) []deduplicator.Cluster {
+	queues := make(map[int64][]deduplicator.Cluster)
+	for _, cluster := range clusters {
+		chatID := cluster.Canonical.Source.ChatID
+		queues[chatID] = append(queues[chatID], cluster)
+	}
+	if len(queues) < 2 {
+		return clusters
+	}
+
+	chatIDs := make([]int64, 0, len(queues))
+	for chatID := range queues {
+		chatIDs = append(chatIDs, chatID)
+		sort.SliceStable(queues[chatID], func(i, j int) bool {
+			return queues[chatID][i].Canonical.Source.Date.After(queues[chatID][j].Canonical.Source.Date)
+		})
+	}
+	sort.SliceStable(chatIDs, func(i, j int) bool {
+		left := queues[chatIDs[i]][0].Canonical.Source.Date
+		right := queues[chatIDs[j]][0].Canonical.Source.Date
+		if left.Equal(right) {
+			return chatIDs[i] < chatIDs[j]
+		}
+		return left.After(right)
+	})
+
+	balanced := make([]deduplicator.Cluster, 0, len(clusters))
+	for len(balanced) < len(clusters) {
+		added := false
+		for _, chatID := range chatIDs {
+			queue := queues[chatID]
+			if len(queue) == 0 {
+				continue
+			}
+			balanced = append(balanced, queue[0])
+			queues[chatID] = queue[1:]
+			added = true
+		}
+		if !added {
+			break
+		}
+	}
+	return balanced
 }
 
 func summaryInput(processed *pipeline.Result, format string, chatByID map[int64]domain.TelegramChat) llm.SummaryInput {

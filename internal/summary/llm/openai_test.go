@@ -47,6 +47,9 @@ func TestOpenAICompatibleSummarize(t *testing.T) {
 		if !strings.Contains(request.Messages[0].Content, "Overview — короткое описание под заголовком в 1–2 предложениях") {
 			t.Fatalf("system prompt does not require a short overview: %q", request.Messages[0].Content)
 		}
+		if !strings.Contains(request.Messages[0].Content, "не позволяй одному каналу доминировать") {
+			t.Fatalf("system prompt does not require source diversity: %q", request.Messages[0].Content)
+		}
 		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
 			Message chatMessage `json:"message"`
 		}{{Message: chatMessage{Role: "assistant", Content: `{"title":"Digest","overview":"Overview","topics":[{"title":"Topic","category":"Go","short_summary":"Short","full_summary":"Full","why_important":"Important","confidence":"medium","importance":7,"source_indexes":[0]}]}`}}}})

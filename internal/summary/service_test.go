@@ -160,6 +160,48 @@ func TestGenerateFromCollectionDoesNotFailSavedSummaryWhenTelegramReadMarkFails(
 	}
 }
 
+func TestGenerateFromCollectionBalancesLLMInputAcrossChats(t *testing.T) {
+	ctx := context.Background()
+	base := time.Now()
+	users := &fakeUsers{user: &domain.User{ID: 1, TelegramUserID: 42}}
+	collections := &fakeCollections{
+		job: &domain.MessageCollectionJob{ID: 10, UserID: 1, GroupID: 7, Status: domain.JobStatusCompleted},
+		messages: []domain.CollectedMessage{
+			{ID: 1001, JobID: 10, UserID: 1, ChatID: 5, MessageID: 101, Date: base.Add(5 * time.Minute), Text: "First source has the newest long regional news message about transport delays"},
+			{ID: 1002, JobID: 10, UserID: 1, ChatID: 5, MessageID: 102, Date: base.Add(4 * time.Minute), Text: "First source has another distinct long regional news message about schools"},
+			{ID: 1003, JobID: 10, UserID: 1, ChatID: 5, MessageID: 103, Date: base.Add(3 * time.Minute), Text: "First source has a third distinct long regional news message about roads"},
+			{ID: 2001, JobID: 10, UserID: 1, ChatID: 6, MessageID: 201, Date: base.Add(2 * time.Minute), Text: "Second source has a distinct long regional news message about healthcare"},
+			{ID: 3001, JobID: 10, UserID: 1, ChatID: 7, MessageID: 301, Date: base.Add(1 * time.Minute), Text: "Third source has a distinct long regional news message about utilities"},
+		},
+	}
+	summaries := &fakeSummaries{}
+	chats := &fakeChats{chats: []domain.TelegramChat{
+		{ID: 5, UserID: 1, TelegramChatID: -1005, Title: "One"},
+		{ID: 6, UserID: 1, TelegramChatID: -1006, Title: "Two"},
+		{ID: 7, UserID: 1, TelegramChatID: -1007, Title: "Three"},
+	}}
+	summarizer := &recordingSummarizer{}
+	service := NewService(42, users, collections, summaries, chats, newFakePositions(), summarizer)
+
+	_, err := service.GenerateFromCollection(ctx, GenerateRequest{
+		TelegramUserID:  42,
+		CollectionJobID: 10,
+		Format:          "standard",
+	})
+	if err != nil {
+		t.Fatalf("GenerateFromCollection() error = %v", err)
+	}
+
+	var got []string
+	for _, message := range summarizer.input.Messages {
+		got = append(got, message.ChatTitle)
+	}
+	want := []string{"One", "Two", "Three", "One", "One"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("LLM chat order = %v, want %v", got, want)
+	}
+}
+
 func TestSummaryCoverageCountsAndPersistsExcludedReasons(t *testing.T) {
 	processed := &pipeline.Result{Clusters: []deduplicator.Cluster{
 		{Messages: []filter.Message{{Source: domain.CollectedMessage{ID: 101}}, {Source: domain.CollectedMessage{ID: 102}}}},
@@ -197,6 +239,36 @@ func (fakeSummarizer) Summarize(context.Context, llm.SummaryInput) (*llm.Summary
 }
 
 func (fakeSummarizer) ConvertToArticle(context.Context, llm.ArticleInput) (*llm.ArticleResult, error) {
+	return nil, nil
+}
+
+type recordingSummarizer struct {
+	input llm.SummaryInput
+}
+
+func (s *recordingSummarizer) Summarize(_ context.Context, input llm.SummaryInput) (*llm.SummaryResult, error) {
+	s.input = input
+	sourceIndexes := make([]int, 0, len(input.Messages))
+	for i := range input.Messages {
+		sourceIndexes = append(sourceIndexes, i)
+	}
+	return &llm.SummaryResult{
+		Title:    "Digest",
+		Overview: "Overview",
+		Topics: []llm.SummaryTopicResult{{
+			Title:         "Topic",
+			Category:      "News",
+			ShortSummary:  "Short",
+			FullSummary:   "Full",
+			WhyImportant:  "Important",
+			Confidence:    "high",
+			Importance:    9,
+			SourceIndexes: sourceIndexes,
+		}},
+	}, nil
+}
+
+func (s *recordingSummarizer) ConvertToArticle(context.Context, llm.ArticleInput) (*llm.ArticleResult, error) {
 	return nil, nil
 }
 
